@@ -1,0 +1,19 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secretos: nunca en el repositorio
+.env
+.env.*
+!.env.example
+
+.vscode/
+.idea/
+*.log
