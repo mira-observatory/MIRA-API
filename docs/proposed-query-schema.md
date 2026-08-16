@@ -1,9 +1,19 @@
 # Propuesta: esquema `query` para MIRA-ETL
 
-**Estado: borrador, no aplicado.** Este documento vive en MIRA-API porque aqui se
-detecto el vacio, pero **el DDL final debe aplicarse en `MIRA-ETL/sql/`**, nunca
-aqui (ver la regla en el [README](../README.md)). Nada de este archivo se ejecuta
-automaticamente.
+**Estado: SQL ya escrito y pusheado a MIRA-ETL, pendiente de aplicar contra la
+base real y de PR.** Este documento vive en MIRA-API porque aqui se detecto el
+vacio, pero **el DDL vive en `MIRA-ETL/sql/`**, nunca aqui (ver la regla en el
+[README](../README.md)). Nada de este archivo se ejecuta automaticamente.
+
+El SQL de esta propuesta ya se escribio como archivo real y se subio a
+MIRA-ETL en la rama `feat/query-layer`
+(`sql/003_query_layer.sql` + `docs/query_layer_access.md`, 2026-08-15):
+**https://github.com/mira-observatory/MIRA-ETL/pull/new/feat/query-layer**.
+Falta que alguien con acceso a la Supabase real corra `mira-etl init-db` (crea
+las vistas y los indices, no toca ninguna tabla existente) y despues siga los
+pasos de `docs/query_layer_access.md` para crear el rol `mira_query` con una
+contrasena real -- ese paso se dejo fuera del SQL a proposito, para que ningun
+secreto quede commiteado.
 
 ## Por que existe este documento
 
