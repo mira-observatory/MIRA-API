@@ -13,8 +13,14 @@ from mira_api.audit.outcomes import Outcome
 ALLOWED_RELATIONS: frozenset[str] = frozenset(
     {
         "query.v_process",
-        "query.mv_supplier_profile",
-        "query.mv_buyer_profile",
+        # Relacion completa proceso <-> comprador/proveedor, sin aplanar. v_process
+        # se queda a nivel de proceso (buyer_id/supplier_id solo si hay exactamente
+        # uno); estas vistas son las que responden correctamente "cuantos contratos
+        # gano X" cuando un proceso tiene varios. Ver docs/proposed-query-schema.md.
+        "query.v_process_buyers",
+        "query.v_process_suppliers",
+        "query.v_buyers",
+        "query.v_suppliers",
         "query.v_duplicate_hints",
         "query.v_coverage",
     }

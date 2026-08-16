@@ -34,15 +34,33 @@ sistema: es un hallazgo sobre la calidad de la publicacion oficial.
 
 En construccion. Fase 0 del plan de arquitectura.
 
+**Dependencia bloqueante:** el esquema `query` (vistas `v_process`, `v_buyers`,
+`v_suppliers`, `v_duplicate_hints`, `v_coverage`), los indices de trigrama y el rol
+de solo lectura `mira_query` los crea [MIRA-ETL](https://github.com/mira-observatory/MIRA-ETL),
+no este repo. A la fecha, MIRA-ETL solo tiene los esquemas `raw`, `staging`, `mart`
+y `audit` (ver `sql/001_init.sql`); el esquema `query` todavia no existe alli. Hasta
+que se cree, este servicio se desarrolla contra un PostgreSQL local sembrado con
+`sql/001_init.sql` del ETL mas un script de vistas provisional que **no vive en este
+repo** (el DDL de las vistas es responsabilidad exclusiva de MIRA-ETL).
+
+Hay una propuesta de esas vistas, mapeada columna a columna contra el `mart.*` real
+de hoy, en [`docs/proposed-query-schema.md`](docs/proposed-query-schema.md) — es un
+borrador para que alguien lo lleve como PR a MIRA-ETL, no se ejecuta desde aqui.
+
 ## Arquitectura
+
+Esta version **no tiene catalogo de consultas predefinidas**. Toda pregunta se
+responde con SQL generado por el modelo, validado programaticamente antes de
+ejecutarse. Ese es el objetivo de esta fase: el registro de cada intento -pregunta,
+SQL generado, aceptado o rechazado y por que, filas devueltas- es la materia prima
+con la que mas adelante se construira un catalogo de consultas parametrizadas.
 
 ```text
 pregunta ->
   normalizacion            (codigo)
   clasificacion + params   (modelo rapido)
   resolucion de entidades  (PostgreSQL, sin IA)
-  plantilla del catalogo   (codigo)      <- v1: catalogo cerrado
-  [generacion de SQL]      (modelo potente, tras bandera, desde F4)
+  generacion de SQL        (modelo potente)
   validacion sqlglot       (codigo)
   ejecucion                (PostgreSQL, rol de solo lectura)
   redaccion + verificacion (modelo rapido + codigo)
@@ -84,7 +102,7 @@ Pruebas y calidad:
 |---|---|
 | `src/mira_api/api/` | Endpoints HTTP y esquemas de request/response |
 | `src/mira_api/db/` | Pool de conexiones y ejecutor de solo lectura. Unica frontera con el driver |
-| `src/mira_api/nlq/` | Catalogo de consultas, resolucion de entidades, validador de SQL, pipeline |
+| `src/mira_api/nlq/` | Resolucion de entidades, generacion y validacion de SQL, pipeline de la consulta |
 | `src/mira_api/audit/` | Registro de consultas para auditoria y mejora continua |
 
 ## Lo que este repositorio nunca hace

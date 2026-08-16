@@ -8,6 +8,26 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    # Solo para T0.3: probar que el pool respeta permisos de solo lectura y que
+    # agotarlo no cuelga. No es el esquema `query` real de MIRA-ETL (ese vive en
+    # ese repo); las pruebas de integracion siembran su propio esquema minimo.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      MIRA_TEST_DB_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
     steps:
       - uses: actions/checkout@v4
 
@@ -27,5 +47,7 @@ jobs:
 
       # Las pruebas del validador de SQL no necesitan base de datos ni modelo de
       # lenguaje: corren siempre y son la red de seguridad mas barata del servicio.
+      # Las de tests/test_pool_integration.py usan el servicio Postgres de arriba;
+      # fuera de CI se saltan solas si no existe MIRA_TEST_DB_ADMIN_URL.
       - name: Pruebas
         run: pytest -q

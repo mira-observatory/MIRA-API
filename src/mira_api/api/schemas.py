@@ -47,6 +47,11 @@ class Warning(BaseModel):
         "TRUNCATED_RESULT",
         "NULL_AMOUNTS_EXCLUDED",
         "NO_DATA_FOR_PERIOD",
+        # query.v_process deja buyer_id/supplier_id en NULL cuando el proceso tiene
+        # mas de un comprador o proveedor (buyer_count / supplier_count > 1). Senala
+        # que hay que mirar query.v_process_buyers / v_process_suppliers.
+        "MULTIPLE_BUYERS_PER_PROCESS",
+        "MULTIPLE_SUPPLIERS_PER_PROCESS",
     ]
     message_es: str
     details: dict[str, Any] = {}
@@ -83,7 +88,7 @@ class QueryResponse(BaseModel):
     query_id: UUID
     question: str
     intent: str | None = None
-    strategy: Literal["template", "generated_sql", "out_of_scope", "cache"]
+    strategy: Literal["generated_sql", "cache", "out_of_scope"]
     outcome: Outcome
 
     #: El SQL ejecutado se devuelve al usuario. Es la prueba de que el numero no fue

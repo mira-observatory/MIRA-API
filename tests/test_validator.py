@@ -9,8 +9,21 @@ MAX_ROWS = 500
 
 
 def test_acepta_select_sobre_vista_permitida() -> None:
-    result = validate("select country_code, count(*) from query.v_process group by 1", max_rows=MAX_ROWS)
+    sql = "select country_code, count(*) from query.v_process group by 1"
+    result = validate(sql, max_rows=MAX_ROWS)
     assert "query.v_process" in result.relations
+
+
+def test_acepta_select_sobre_v_process_suppliers() -> None:
+    sql = "select supplier_id, count(*) from query.v_process_suppliers group by 1"
+    result = validate(sql, max_rows=MAX_ROWS)
+    assert "query.v_process_suppliers" in result.relations
+
+
+def test_acepta_select_sobre_v_process_buyers() -> None:
+    sql = "select buyer_id, count(*) from query.v_process_buyers group by 1"
+    result = validate(sql, max_rows=MAX_ROWS)
+    assert "query.v_process_buyers" in result.relations
 
 
 def test_inyecta_limit_cuando_falta() -> None:
@@ -53,7 +66,12 @@ def test_rechaza_varias_sentencias() -> None:
 
 @pytest.mark.parametrize(
     "relation",
-    ["mart.procurement_record_core", "raw.source_rows", "staging.normalized_candidates", "audit.etl_runs"],
+    [
+        "mart.procurement_record_core",
+        "raw.source_rows",
+        "staging.normalized_candidates",
+        "audit.etl_runs",
+    ],
 )
 def test_rechaza_esquemas_privados(relation: str) -> None:
     with pytest.raises(SqlRejected) as err:
