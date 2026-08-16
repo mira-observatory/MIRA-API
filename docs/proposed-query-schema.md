@@ -6,14 +6,27 @@ vacio, pero **el DDL vive en `MIRA-ETL/sql/`**, nunca aqui (ver la regla en el
 [README](../README.md)). Nada de este archivo se ejecuta automaticamente.
 
 El SQL de esta propuesta ya se escribio como archivo real y se subio a
-MIRA-ETL en la rama `feat/query-layer`
-(`sql/003_query_layer.sql` + `docs/query_layer_access.md`, 2026-08-15):
+MIRA-ETL en la rama `feat/query-layer`: **sql/003_grain.sql**,
+**sql/004_query_layer.sql**, **sql/005_semantic_dictionary.sql** +
+**docs/query_layer_access.md** (2026-08-15):
 **https://github.com/mira-observatory/MIRA-ETL/pull/new/feat/query-layer**.
 Falta que alguien con acceso a la Supabase real corra `mira-etl init-db` (crea
-las vistas y los indices, no toca ninguna tabla existente) y despues siga los
-pasos de `docs/query_layer_access.md` para crear el rol `mira_query` con una
-contrasena real -- ese paso se dejo fuera del SQL a proposito, para que ningun
-secreto quede commiteado.
+la columna `grain`, las vistas, los indices y el diccionario semantico; no
+toca ninguna tabla existente mas alla de agregar esa columna nueva) y despues
+siga los pasos de `docs/query_layer_access.md` para crear el rol `mira_query`
+con una contrasena real -- ese paso se dejo fuera del SQL a proposito, para
+que ningun secreto quede commiteado.
+
+**Nota sobre coordinacion:** existio en paralelo una segunda rama
+(`feature/part-a-query-schema`) que resolvia lo mismo con un diseno distinto
+-- arrays de comprador/proveedor en `v_process` en vez de vistas separadas, y
+una columna `display_name` nueva con la grafia original en vez de reusar
+`name_normalised`. El 2026-08-15 se decidio explicitamente **no** adoptar esa
+version: se toma de ahi solo `grain` y la idea del diccionario semantico
+(`query.semantic_dictionary`), reescrito para las columnas reales de este
+esquema. Si en el futuro se retoma la idea de `display_name` como grafia
+original, hay que actualizar esta propuesta, el validador y el diccionario
+semantico a la vez -- estan acoplados.
 
 ## Por que existe este documento
 
@@ -68,19 +81,13 @@ confunde).
 
 | Falta | Donde | Por que importa |
 |---|---|---|
-| Columna `grain` | `mart.procurement_record_core` | No existe ningun campo que distinga `PROCESS` de `LINE_ITEM`. Derivarlo con `case when country_code = 'CR' then ...` es un atajo fragil: el dia que otro pais publique a nivel de linea, la vista miente en silencio. Deberia ser una columna real que el conector de cada pais setea explicitamente. **Sigue abierto** — mi recomendacion es agregar la columna real ahora (es barato) en vez de esperar a que un segundo pais la necesite; no bloquea nada mientras tanto porque hoy solo Costa Rica usa grano de linea y eso ya se sabe por convencion. |
+| ~~Columna `grain`~~ | `mart.procurement_record_core` | **Resuelto (2026-08-15):** columna real (`sql/003_grain.sql`), nullable, con check constraint `PROCESS`/`LINE_ITEM`. Los tres conectores existentes ya la setean (`transform_cr.py` = `LINE_ITEM`, `transform_gt.py`/`transform_ni.py` = `PROCESS`). `v_process.grain` ya no es un placeholder `NULL`. |
 | ~~Nombre original de proveedor/comprador~~ | `mart.suppliers.name_normalised`, `mart.buyers.name_normalised` | **Resuelto (2026-08-15):** se usa `name_normalised` como `display_name` sin problema, no se requiere un campo adicional. |
 | Cobertura por pais/periodo consultable | `audit.etl_runs` no tiene periodo estructurado mas alla del texto libre `period` | Es suficiente para `data_version` (`max(finished_at) where status='SUCCESS'`), pero para que `query.v_coverage` reporte "que paises y periodos estan realmente cargados" con precision, conviene confirmar el formato de `period` (hoy es `text`, no un rango tipado) antes de escribir la vista. **Sigue abierto.** |
 
-El de `grain` no bloquea escribir la vista — bloquea escribir la version honesta
-que el plan de arquitectura pide. Lo dejo explicito para no proponer una vista que
-parezca completa pero mienta en un caso de borde.
+## Propuesta de DDL (ya aplicada en el repo, destino final: `MIRA-ETL/sql/004_query_layer.sql`)
 
-## Propuesta de DDL (para revision, destino final: `MIRA-ETL/sql/003_query_layer.sql`)
-
-Asume que se resuelve el vacio de `grain` agregando la columna a
-`procurement_record_core` primero (migracion previa, no incluida aqui porque toca
-datos existentes y la debe escribir quien conoce el estado real de cada conector).
+`grain` ya existe (`sql/003_grain.sql`, corre antes que este archivo).
 
 ```sql
 -- 003_query_layer.sql (borrador)
@@ -99,7 +106,7 @@ select
     core.country_code,
     core.source_system,
     core.source_url,
-    core.grain,                          -- ver "Vacios": columna aun no existe
+    core.grain,
     core.data_quality_status,
     core.missing_fields,
     core.extracted_at,
@@ -324,10 +331,9 @@ a tabla + refresh despues si el `EXPLAIN` en produccion lo pide.
    en el contrato de respuesta de MIRA-API.
 2. ~~Nombre "original" de proveedor/comprador~~ — **resuelto** 2026-08-15:
    `name_normalised` se usa como `display_name`, no hace falta un campo nuevo.
-3. La columna `grain` en `mart.procurement_record_core` sigue sin existir. No
-   bloquea nada hoy (solo Costa Rica usa grano de linea), pero recomiendo
-   agregarla como columna real antes de que un segundo pais la necesite, en vez
-   de inferirla por `country_code` dentro de la vista.
+3. ~~La columna `grain` en `mart.procurement_record_core` sigue sin existir~~ —
+   **resuelto** 2026-08-15: `sql/003_grain.sql` en la rama `feat/query-layer`
+   de MIRA-ETL, con los tres conectores ya seteandola.
 4. Decidir el formato de `audit.etl_runs.period` si se quiere que `v_coverage`
    reporte rangos de fecha en vez de la etiqueta de texto libre actual.
 5. ~~Coordinar con MIRA-ETL el cambio analogo en `mart.procurement_buyer_details`~~
