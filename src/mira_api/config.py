@@ -27,24 +27,30 @@ class Settings(BaseSettings):
     statement_timeout_ms: int = 8000
 
     # --- modelo de lenguaje ------------------------------------------------
+    # v1 no tiene catalogo de plantillas: toda pregunta contestable se responde con
+    # SQL generado por el modelo, validado antes de ejecutarse. Ver seccion 1.4.
     anthropic_api_key: str = ""
     model_fast: str = "claude-haiku-4-5-20251001"
-    model_strong: str = "claude-sonnet-5"
-
-    # Bandera de la fase 4: hasta que exista el banco de evaluacion, el servicio
-    # responde unicamente con las consultas parametrizadas del catalogo.
-    enable_generated_sql: bool = False
+    # Configurable por variable de entorno: claude-opus-5 (calidad) o
+    # claude-sonnet-5 (costo, ~30% mas turnos por el mismo presupuesto).
+    sql_model: str = "claude-sonnet-5"
 
     # --- limites -----------------------------------------------------------
     max_question_chars: int = 400
     max_rows: int = 500
-    quota_per_hour: int = 15
-    quota_per_month: int = 100
-    budget_daily_usd: float = 5.0
+
+    # Cuota por sujeto (token anonimo o prefijo de red): acota el abuso, debe ser
+    # generosa. El cortacircuitos global de abajo es lo unico que garantiza el gasto.
+    quota_per_day: int = 5
+    quota_per_month: int = 15
+
+    # Cortacircuitos global de presupuesto. Al 80% del diario, modo solo cache;
+    # al 100% del mensual, solo cache hasta el dia 1.
+    budget_daily_usd: float = 3.50
+    budget_monthly_usd: float = 100.0
 
     # --- versionado, para atribuir regresiones -----------------------------
     prompt_version: str = "0.1.0"
-    catalog_version: str = "0.1.0"
     app_version: str = "0.1.0"
 
     # --- red ---------------------------------------------------------------

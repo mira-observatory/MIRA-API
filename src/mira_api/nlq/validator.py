@@ -13,8 +13,8 @@ from mira_api.audit.outcomes import Outcome
 ALLOWED_RELATIONS: frozenset[str] = frozenset(
     {
         "query.v_process",
-        "query.mv_supplier_profile",
-        "query.mv_buyer_profile",
+        "query.v_buyers",
+        "query.v_suppliers",
         "query.v_duplicate_hints",
         "query.v_coverage",
     }

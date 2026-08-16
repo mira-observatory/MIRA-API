@@ -36,16 +36,22 @@ En construccion. Fase 0 del plan de arquitectura.
 
 ## Arquitectura
 
+v1 no tiene catalogo de consultas predefinidas: toda pregunta contestable se
+responde con SQL generado por el modelo, validado programaticamente antes de
+ejecutarse. Cada consulta -la pregunta, el SQL generado, si fue aceptada o
+rechazada y por que, cuantas filas devolvio- se guarda en `analytics.*`. Ese
+registro es la materia prima con la que mas adelante se construira el catalogo
+de consultas parametrizadas; no es un adorno de observabilidad.
+
 ```text
 pregunta ->
-  normalizacion            (codigo)
-  clasificacion + params   (modelo rapido)
-  resolucion de entidades  (PostgreSQL, sin IA)
-  plantilla del catalogo   (codigo)      <- v1: catalogo cerrado
-  [generacion de SQL]      (modelo potente, tras bandera, desde F4)
-  validacion sqlglot       (codigo)
-  ejecucion                (PostgreSQL, rol de solo lectura)
-  redaccion + verificacion (modelo rapido + codigo)
+  normalizacion              (codigo)
+  clasificacion + params     (modelo rapido)
+  resolucion de entidades    (PostgreSQL, sin IA)
+  generacion de SQL          (modelo potente: Opus 5 o Sonnet 5)
+  validacion sqlglot         (codigo)      <- frontera de seguridad
+  ejecucion                  (PostgreSQL, rol de solo lectura)
+  redaccion + verificacion   (modelo rapido + codigo)
 -> QueryResponse
 ```
 
@@ -84,13 +90,16 @@ Pruebas y calidad:
 |---|---|
 | `src/mira_api/api/` | Endpoints HTTP y esquemas de request/response |
 | `src/mira_api/db/` | Pool de conexiones y ejecutor de solo lectura. Unica frontera con el driver |
-| `src/mira_api/nlq/` | Catalogo de consultas, resolucion de entidades, validador de SQL, pipeline |
+| `src/mira_api/nlq/` | Resolucion de entidades, validador de SQL, pipeline de generacion |
 | `src/mira_api/audit/` | Registro de consultas para auditoria y mejora continua |
 
 ## Lo que este repositorio nunca hace
 
 - **Nunca ejecuta DDL.** Todo el esquema, las vistas de consulta y los roles viven
   en `MIRA-ETL/sql/`.
+- **No tiene catalogo de consultas predefinidas en v1.** Toda pregunta contestable
+  se responde con SQL generado por el modelo y validado antes de ejecutarse. El
+  catalogo, si llega, se derivara despues del registro de auditoria.
 - **Nunca normaliza nombres de entidades.** Esa logica es del ETL; aqui se consumen
   las columnas ya normalizadas.
 - **Nunca consulta `mart`, `raw`, `staging` ni `audit` directamente.** Solo el

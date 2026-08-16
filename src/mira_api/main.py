@@ -51,4 +51,4 @@ async def healthz() -> dict[str, str]:
 
 # Los endpoints de consulta se incorporan en la fase 1:
 #   POST /v1/query, POST /v1/query/stream, GET /v1/entities/resolve,
-#   GET /v1/templates, GET /v1/coverage, GET /v1/quota, POST /v1/feedback
+#   GET /v1/coverage, GET /v1/quota, POST /v1/feedback

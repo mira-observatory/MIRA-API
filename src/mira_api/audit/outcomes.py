@@ -35,8 +35,6 @@ class Outcome(StrEnum):
 
     # --- rechazo: el sistema decidio no ejecutar ---------------------------
     OUT_OF_SCOPE = "OUT_OF_SCOPE"
-    # El backlog del producto: intencion entendida, sin plantilla que la cubra.
-    REJECTED_NO_TEMPLATE = "REJECTED_NO_TEMPLATE"
     REJECTED_ENTITY_NOT_FOUND = "REJECTED_ENTITY_NOT_FOUND"
     # No es un error: es el comportamiento deseado ante nombres parecidos.
     REJECTED_ENTITY_AMBIGUOUS = "REJECTED_ENTITY_AMBIGUOUS"
@@ -72,12 +70,12 @@ class Outcome(StrEnum):
 
 
 #: Codigos que alimentan `analytics.v_unanswered`, la vista que es literalmente el
-#: backlog del producto. Se revisan cada lunes y los grupos mayores se convierten en
-#: plantillas nuevas, correcciones del diccionario semantico, o tickets para el ETL.
+#: backlog del producto. v1 no tiene catalogo: el registro de estas preguntas es la
+#: materia prima con la que despues se construira el catalogo de consultas
+#: parametrizadas (seccion 1.4).
 UNANSWERED_OUTCOMES: frozenset[Outcome] = frozenset(
     {
         Outcome.OUT_OF_SCOPE,
-        Outcome.REJECTED_NO_TEMPLATE,
         Outcome.REJECTED_ENTITY_NOT_FOUND,
     }
 )
