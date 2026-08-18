@@ -20,8 +20,12 @@ class Column(BaseModel):
 class EntityCandidate(BaseModel):
     """Un candidato de comprador o proveedor, con su conteo real.
 
-    Nunca se fusionan candidatos parecidos. Si "Karro y Limon S.A" tiene 6 procesos
-    y "Carro y Limon S.A" tiene 9, se devuelven los dos con 6 y 9. Nunca 15.
+    Puede haber varios candidatos parecidos para la misma busqueda (p.ej.
+    "Karro y Limon S.A" y "Carro y Limon S.A"); se devuelven todos con su
+    conteo real, nunca fusionados. No se senala si dos candidatos parecen
+    duplicados entre si -- decision de producto (2026-08-15): nombres
+    parecidos pueden ser entidades distintas a proposito, y esa comparacion no
+    se hace.
     """
 
     entity_type: Literal["supplier", "buyer"]
@@ -33,25 +37,15 @@ class EntityCandidate(BaseModel):
     match_method: Literal["TAX_ID", "NAME_EXACT", "NAME_FUZZY"]
     similarity: float | None = None
     record_count: int = Field(description="Conteo real en la base, no una estimacion")
-    #: Otros candidatos que se le parecen. Alimenta la advertencia de posible
-    #: duplicado; no implica ninguna accion sobre los datos.
-    similar_to: list[int] = []
 
 
 class Warning(BaseModel):
     code: Literal[
-        "POSSIBLE_DUPLICATE_ENTITY",
         "PARTIAL_COVERAGE",
-        "MIXED_GRAIN",
         "MIXED_CURRENCY",
         "TRUNCATED_RESULT",
         "NULL_AMOUNTS_EXCLUDED",
         "NO_DATA_FOR_PERIOD",
-        # query.v_process deja buyer_id/supplier_id en NULL cuando el proceso tiene
-        # mas de un comprador o proveedor (buyer_count / supplier_count > 1). Senala
-        # que hay que mirar query.v_process_buyers / v_process_suppliers.
-        "MULTIPLE_BUYERS_PER_PROCESS",
-        "MULTIPLE_SUPPLIERS_PER_PROCESS",
     ]
     message_es: str
     details: dict[str, Any] = {}

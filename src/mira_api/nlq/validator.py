@@ -10,19 +10,27 @@ from mira_api.audit.outcomes import Outcome
 #: Unicas relaciones que el servicio puede consultar. El rol de base de datos
 #: (mira_query) solo tiene USAGE sobre el esquema `query`, asi que esta lista es la
 #: segunda linea de defensa, no la primera.
+#:
+#: Refleja el esquema query.* real de MIRA-ETL (sql/002_indexes_and_views.sql,
+#: verificado contra produccion 2026-08-15): un proceso tiene adjudicaciones
+#: (awards), y cada adjudicacion tiene proveedores e items -- el monto adjudicado
+#: vive en la adjudicacion, no en el proceso. "Cuanto se gasto" siempre requiere
+#: join v_process -> v_awards -> v_award_suppliers.
+#:
+#: query.v_coverage TODAVIA NO EXISTE en MIRA-ETL (bloquea distinguir "cero
+#: real" de "cero por falta de datos"). Agregarla aqui cuando exista alla, no
+#: antes. No se pide query.v_duplicate_hints: decision de producto
+#: (2026-08-15) de no senalar posibles duplicados entre entidades parecidas.
 ALLOWED_RELATIONS: frozenset[str] = frozenset(
     {
         "query.v_process",
-        # Relacion completa proceso <-> comprador/proveedor, sin aplanar. v_process
-        # se queda a nivel de proceso (buyer_id/supplier_id solo si hay exactamente
-        # uno); estas vistas son las que responden correctamente "cuantos contratos
-        # gano X" cuando un proceso tiene varios. Ver docs/proposed-query-schema.md.
-        "query.v_process_buyers",
-        "query.v_process_suppliers",
         "query.v_buyers",
         "query.v_suppliers",
-        "query.v_duplicate_hints",
-        "query.v_coverage",
+        "query.v_process_buyers",
+        "query.v_items",
+        "query.v_awards",
+        "query.v_award_items",
+        "query.v_award_suppliers",
     }
 )
 

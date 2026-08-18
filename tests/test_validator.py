@@ -14,16 +14,26 @@ def test_acepta_select_sobre_vista_permitida() -> None:
     assert "query.v_process" in result.relations
 
 
-def test_acepta_select_sobre_v_process_suppliers() -> None:
-    sql = "select supplier_id, count(*) from query.v_process_suppliers group by 1"
-    result = validate(sql, max_rows=MAX_ROWS)
-    assert "query.v_process_suppliers" in result.relations
-
-
 def test_acepta_select_sobre_v_process_buyers() -> None:
     sql = "select buyer_id, count(*) from query.v_process_buyers group by 1"
     result = validate(sql, max_rows=MAX_ROWS)
     assert "query.v_process_buyers" in result.relations
+
+
+def test_acepta_join_entre_process_awards_y_award_suppliers() -> None:
+    # "Cuanto se gasto" siempre pasa por aqui: el monto vive en v_awards, no
+    # en v_process.
+    sql = (
+        "select s.supplier_id, sum(a.awarded_amount) "
+        "from query.v_process p "
+        "join query.v_awards a using (process_id) "
+        "join query.v_award_suppliers asup on asup.award_id = a.award_id "
+        "join query.v_suppliers s on s.supplier_id = asup.supplier_id "
+        "group by s.supplier_id"
+    )
+    result = validate(sql, max_rows=MAX_ROWS)
+    expected = {"query.v_process", "query.v_awards", "query.v_award_suppliers", "query.v_suppliers"}
+    assert expected <= result.relations
 
 
 def test_inyecta_limit_cuando_falta() -> None:
@@ -67,7 +77,7 @@ def test_rechaza_varias_sentencias() -> None:
 @pytest.mark.parametrize(
     "relation",
     [
-        "mart.procurement_record_core",
+        "mart.processes",
         "raw.source_rows",
         "staging.normalized_candidates",
         "audit.etl_runs",
@@ -105,8 +115,8 @@ def test_rechaza_sql_no_parseable() -> None:
 
 def test_permite_cte_no_recursiva_sobre_vista_permitida() -> None:
     sql = (
-        "with base as (select supplier_id, awarded_amount from query.v_process) "
-        "select supplier_id, sum(awarded_amount) from base group by 1"
+        "with base as (select process_id, estimated_amount from query.v_process) "
+        "select process_id, estimated_amount from base"
     )
     result = validate(sql, max_rows=MAX_ROWS)
     assert "query.v_process" in result.relations

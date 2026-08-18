@@ -26,26 +26,27 @@ cumplir por construccion:
 ### Ambiguedad de entidades
 
 Si existen `Karro y Limon S.A` con 6 procesos y `Carro y Limon S.A` con 9, el
-servicio devuelve **ambos candidatos con sus conteos reales** y una senal de posible
-duplicado. Nunca los fusiona, nunca los suma. La ambiguedad no es un defecto del
-sistema: es un hallazgo sobre la calidad de la publicacion oficial.
+servicio devuelve **ambos candidatos con sus conteos reales**. Nunca los fusiona,
+nunca los suma. No se senala si dos candidatos parecen duplicados entre si --
+decision de producto (2026-08-15): nombres parecidos pueden ser entidades
+distintas a proposito.
 
 ## Estado
 
 En construccion. Fase 0 del plan de arquitectura.
 
-**Dependencia bloqueante:** el esquema `query` (vistas `v_process`, `v_buyers`,
-`v_suppliers`, `v_duplicate_hints`, `v_coverage`), los indices de trigrama y el rol
-de solo lectura `mira_query` los crea [MIRA-ETL](https://github.com/mira-observatory/MIRA-ETL),
-no este repo. A la fecha, MIRA-ETL solo tiene los esquemas `raw`, `staging`, `mart`
-y `audit` (ver `sql/001_init.sql`); el esquema `query` todavia no existe alli. Hasta
-que se cree, este servicio se desarrolla contra un PostgreSQL local sembrado con
-`sql/001_init.sql` del ETL mas un script de vistas provisional que **no vive en este
-repo** (el DDL de las vistas es responsabilidad exclusiva de MIRA-ETL).
+El esquema `query` ya existe en [MIRA-ETL](https://github.com/mira-observatory/MIRA-ETL)
+(verificado contra produccion 2026-08-15): `v_process`, `v_buyers`, `v_suppliers`,
+`v_process_buyers`, `v_items`, `v_awards`, `v_award_items`, `v_award_suppliers`.
+Es un diseno normalizado -- un proceso tiene adjudicaciones, cada adjudicacion
+tiene proveedores e items; el monto vive en la adjudicacion, no en el proceso.
+Ver `docs/proposed-query-schema.md` para el detalle.
 
-Hay una propuesta de esas vistas, mapeada columna a columna contra el `mart.*` real
-de hoy, en [`docs/proposed-query-schema.md`](docs/proposed-query-schema.md) — es un
-borrador para que alguien lo lleve como PR a MIRA-ETL, no se ejecuta desde aqui.
+**Dependencia bloqueante restante:** `query.v_coverage` (distingue "cero real" de
+"cero por falta de datos") y los indices de trigrama sobre `mart.suppliers` /
+`mart.buyers` (necesarios para que la resolucion de entidades del Hito 1 sea
+rapida) todavia no existen en MIRA-ETL. El DDL de las vistas y del esquema
+`query` es responsabilidad exclusiva de MIRA-ETL -- **no vive en este repo**.
 
 ## Arquitectura
 

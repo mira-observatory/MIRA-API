@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from mira_api.api.schemas import EntityCandidate
 from mira_api.config import get_settings
+from mira_api.db.executor import ReadOnlyExecutor
 from mira_api.db.pool import build_log_pool, build_read_pool
+from mira_api.nlq.entities import resolve_entities
 
 
 @asynccontextmanager
@@ -18,6 +22,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.log_pool = build_log_pool(settings)
     await app.state.read_pool.open()
     await app.state.log_pool.open()
+    app.state.executor = ReadOnlyExecutor(app.state.read_pool)
     try:
         yield
     finally:
@@ -49,6 +54,21 @@ async def healthz() -> dict[str, str]:
     return {"status": "ok", "version": get_settings().app_version}
 
 
-# Los endpoints de consulta se incorporan en la fase 1:
-#   POST /v1/query, POST /v1/query/stream, GET /v1/entities/resolve,
-#   GET /v1/templates, GET /v1/coverage, GET /v1/quota, POST /v1/feedback
+@app.get("/v1/entities/resolve")
+async def entities_resolve(
+    q: str = Query(min_length=1, max_length=200),
+    type: Literal["supplier", "buyer"] = Query(...),
+    countries: list[str] = Query(min_length=1),
+) -> list[EntityCandidate]:
+    """Resuelve un nombre a candidatos reales -- sin IA, sqlglot ni el modelo
+    de lenguaje tocan esta ruta. Devuelve todos los candidatos con su conteo
+    real; nunca fusiona nombres parecidos (caso Karro/Carro)."""
+    executor: ReadOnlyExecutor = app.state.executor
+    return await resolve_entities(
+        executor, query=q, entity_type=type, countries=[c.upper() for c in countries]
+    )
+
+
+# Los endpoints restantes se incorporan en fases siguientes:
+#   POST /v1/query, POST /v1/query/stream, GET /v1/coverage, GET /v1/quota,
+#   POST /v1/feedback

@@ -37,6 +37,12 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI usa Query/Depends/Body como valor por defecto a proposito -- es el
+# patron documentado del framework, no la trampa de mutable-default que B008
+# detecta en general.
+extend-immutable-calls = ["fastapi.Query", "fastapi.Depends", "fastapi.Body"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true
