@@ -76,13 +76,23 @@ class ValidatedSql:
     limit_injected: bool
 
 
-def validate(sql: str, *, max_rows: int) -> ValidatedSql:
+#: Vistas que traen country_code. Si el SQL las toca, tiene que filtrar por
+#: pais -- v_awards/v_items/v_process_buyers/v_award_* no tienen la columna,
+#: se llega a ellas por process_id/award_id ya acotado via v_process.
+_COUNTRY_SCOPED_VIEWS = frozenset({"query.v_process", "query.v_buyers", "query.v_suppliers"})
+
+
+def validate(sql: str, *, max_rows: int, countries: list[str]) -> ValidatedSql:
     """Valida SQL sobre el arbol sintactico, nunca con expresiones regulares.
 
     Devuelve el SQL reescrito con LIMIT forzado, o levanta SqlRejected con el codigo
     de la taxonomia que corresponde. El codigo se registra en analytics.query_attempt
     para poder medir la tasa de rechazo del validador, que es el detector de
     regresiones mas rapido que tiene el servicio.
+
+    `countries` son los paises que el usuario realmente pidio -- el modelo nunca
+    decide por su cuenta que paises son validos, solo puede filtrar dentro de esa
+    lista o el SQL se rechaza (REJECTED_SQL_COUNTRY_SCOPE) y se reintenta.
     """
     try:
         statements = sqlglot.parse(sql, dialect="postgres")
@@ -120,6 +130,9 @@ def validate(sql: str, *, max_rows: int) -> ValidatedSql:
         if name in FORBIDDEN_FUNCTIONS:
             raise SqlRejected(Outcome.REJECTED_SQL_FUNCTION, "forbidden_function", name)
 
+    if relations & _COUNTRY_SCOPED_VIEWS:
+        _check_country_scope(tree, countries)
+
     limit_injected = _enforce_limit(tree, max_rows)
     return ValidatedSql(
         sql=tree.sql(dialect="postgres"),
@@ -139,6 +152,78 @@ def _collect_relations(tree: exp.Expression) -> set[str]:
         db = (table.db or "").lower()
         relations.add(f"{db}.{name}" if db else name)
     return relations
+
+
+def _check_country_scope(tree: exp.Expression, countries: list[str]) -> None:
+    """Exige un predicado sobre country_code (=, IN, = ANY(...)) cuyos valores
+    sean subconjunto de `countries`. No importa el alias de tabla -- solo el
+    nombre de columna, porque el modelo no siempre califica con alias."""
+    values, found = _country_code_predicate_values(tree)
+    if not found:
+        raise SqlRejected(
+            Outcome.REJECTED_SQL_COUNTRY_SCOPE,
+            "missing_country_filter",
+            f"la consulta debe filtrar country_code dentro de {sorted(countries)}",
+        )
+    allowed = {c.upper() for c in countries}
+    extra = {v.upper() for v in values} - allowed
+    if extra:
+        raise SqlRejected(
+            Outcome.REJECTED_SQL_COUNTRY_SCOPE,
+            "country_not_allowed",
+            f"filtra {sorted(extra)}, fuera de lo pedido {sorted(countries)}",
+        )
+
+
+def _country_code_predicate_values(tree: exp.Expression) -> tuple[set[str], bool]:
+    values: set[str] = set()
+    found = False
+
+    for eq in tree.find_all(exp.EQ):
+        if _is_country_code_column(eq.this):
+            found = True
+            values |= _literal_values(eq.expression)
+        elif _is_country_code_column(eq.expression):
+            found = True
+            values |= _literal_values(eq.this)
+
+    for is_in in tree.find_all(exp.In):
+        if not _is_country_code_column(is_in.this):
+            continue
+        if is_in.args.get("query") is not None:
+            # `country_code IN (SELECT ...)`: no hay literales que extraer, no
+            # se puede verificar que el subquery solo devuelva paises
+            # permitidos. Se rechaza directo en vez de dejarlo pasar sin
+            # verificar.
+            raise SqlRejected(
+                Outcome.REJECTED_SQL_COUNTRY_SCOPE,
+                "country_filter_not_verifiable",
+                "el filtro de country_code debe ser una lista de literales, no una subconsulta",
+            )
+        found = True
+        for item in is_in.expressions:
+            values |= _literal_values(item)
+
+    return values, found
+
+
+def _is_country_code_column(node: exp.Expression) -> bool:
+    return isinstance(node, exp.Column) and node.name.lower() == "country_code"
+
+
+def _literal_values(node: exp.Expression) -> set[str]:
+    if isinstance(node, exp.Literal) and node.is_string:
+        return {node.this}
+    if isinstance(node, exp.Array):
+        result: set[str] = set()
+        for item in node.expressions:
+            result |= _literal_values(item)
+        return result
+    if isinstance(node, exp.Any):
+        return _literal_values(node.this)
+    if isinstance(node, exp.Paren):
+        return _literal_values(node.this)
+    return set()
 
 
 def _enforce_limit(tree: exp.Select, max_rows: int) -> bool:

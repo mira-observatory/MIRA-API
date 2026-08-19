@@ -54,7 +54,9 @@ def test_build_system_blocks_marca_cache_control() -> None:
 
 @pytest.mark.asyncio
 async def test_acepta_sql_valido_en_el_primer_intento() -> None:
-    client = _ScriptedClient(["select process_id from query.v_process"])
+    client = _ScriptedClient(
+        ["select process_id from query.v_process where country_code = 'CR'"]
+    )
 
     result = await generate_validated_sql(
         client,  # type: ignore[arg-type]
@@ -76,7 +78,7 @@ async def test_reintenta_con_la_retroalimentacion_del_validador() -> None:
     client = _ScriptedClient(
         [
             "select * from mart.processes",  # rechazado: esquema privado
-            "select process_id from query.v_process",  # aceptado
+            "select process_id from query.v_process where country_code = 'CR'",  # aceptado
         ]
     )
 

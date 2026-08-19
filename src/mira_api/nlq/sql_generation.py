@@ -28,8 +28,11 @@ otra sentencia.
 3. Solo puedes usar las vistas listadas abajo, siempre con el prefijo \
 "query." exacto (por ejemplo query.v_process). Nunca inventes una columna o \
 vista que no este en la lista.
-4. Cuando la pregunta menciona o implica uno o mas paises, filtra siempre \
-por country_code. Los codigos validos son CR, GT, HN, NI.
+4. Si la consulta usa query.v_process, query.v_buyers o query.v_suppliers, \
+SIEMPRE debes filtrar por country_code, con un valor literal ('CR') o una \
+lista literal (IN ('CR', 'GT')) -- nunca con una subconsulta. Usa unicamente \
+los paises indicados en "Paises:" abajo, ni mas ni menos. Esto se revisa \
+automaticamente y se rechaza si falta o si incluye un pais no pedido.
 5. Nunca sumes columnas de dinero (estimated_amount, awarded_amount) de \
 distinta moneda sin agrupar antes por currency_code.
 6. El monto adjudicado vive en query.v_awards, no en query.v_process. Para \
@@ -126,7 +129,7 @@ async def generate_validated_sql(
             raise OutOfScope(question)
 
         try:
-            validated = validate(sql_text, max_rows=max_rows)
+            validated = validate(sql_text, max_rows=max_rows, countries=countries)
         except SqlRejected as err:
             attempts.append(
                 GenerationAttempt(

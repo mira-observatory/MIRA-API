@@ -78,13 +78,15 @@ async def test_pregunta_respondible_devuelve_filas_reales() -> None:
 
 @pytest.mark.asyncio
 async def test_cero_filas_es_ok_zero_rows_no_error() -> None:
-    client = _ScriptedClient(["select process_id from query.v_process where country_code = 'HN'"])
+    client = _ScriptedClient(
+        ["select process_id from query.v_process where country_code = 'HN'"]
+    )
     executor = _ScriptedExecutor(
         result=Rows(columns=["process_id"], rows=[], row_count=0, truncated=False)
     )
 
     response = await run_query(
-        _request("procesos en Honduras en enero"),
+        QueryRequest(question="procesos en Honduras en enero", countries=["HN"]),
         client=client,  # type: ignore[arg-type]
         executor=executor,  # type: ignore[arg-type]
         system_blocks=[],
@@ -138,7 +140,9 @@ async def test_sql_irrecuperable_no_ejecuta_nada() -> None:
 
 @pytest.mark.asyncio
 async def test_timeout_de_base_de_datos_se_reporta_como_tal() -> None:
-    client = _ScriptedClient(["select process_id from query.v_process"])
+    client = _ScriptedClient(
+        ["select process_id from query.v_process where country_code = 'CR'"]
+    )
     executor = _ScriptedExecutor(error=psycopg.errors.QueryCanceled("statement timeout"))
 
     response = await run_query(

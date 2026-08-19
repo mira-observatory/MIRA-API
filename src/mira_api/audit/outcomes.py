@@ -43,6 +43,9 @@ class Outcome(StrEnum):
     REJECTED_SQL_RELATION = "REJECTED_SQL_RELATION"
     REJECTED_SQL_FUNCTION = "REJECTED_SQL_FUNCTION"
     REJECTED_SQL_COST = "REJECTED_SQL_COST"
+    # Falta el filtro por country_code, o filtra un pais fuera de lo pedido.
+    # Se corrige con el mismo reintento que las demas REJECTED_SQL_*.
+    REJECTED_SQL_COUNTRY_SCOPE = "REJECTED_SQL_COUNTRY_SCOPE"
 
     # --- fallo: se intento y se rompio -------------------------------------
     FAILED_DB_TIMEOUT = "FAILED_DB_TIMEOUT"
@@ -88,5 +91,6 @@ MUST_BE_ZERO: frozenset[Outcome] = frozenset(
         Outcome.REJECTED_SQL_NOT_SELECT,
         Outcome.REJECTED_SQL_RELATION,
         Outcome.REJECTED_SQL_FUNCTION,
+        Outcome.REJECTED_SQL_COUNTRY_SCOPE,
     }
 )
