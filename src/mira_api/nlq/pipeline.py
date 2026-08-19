@@ -46,7 +46,11 @@ def _infer_column_kind(name: str) -> Literal["number", "money", "date", "text"]:
         return "money"
     if name.endswith(_DATE_COLUMNS_SUFFIXES) or name == "period":
         return "date"
-    if name.endswith(("_id", "_count")) or name in {"row_count"}:
+    # OJO: *_id no es "number" -- process_id/award_id/etc. son codigos de texto
+    # como "MIRA-CR-AWARD-BA79BA102334", no enteros. Tratarlos como numero le
+    # hacia perder el dato al frontend (esperaba un number de JS) y les
+    # hubiera puesto separador de miles, que no tiene sentido en un id.
+    if name.endswith("_count") or name == "row_count":
         return "number"
     return "text"
 

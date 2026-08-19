@@ -7,7 +7,12 @@ from mira_api.api.schemas import QueryRequest
 from mira_api.audit.outcomes import Outcome
 from mira_api.db.executor import Rows
 from mira_api.llm.client import Completion
-from mira_api.nlq.pipeline import normalise_question, run_query, wait_for_audit_tasks
+from mira_api.nlq.pipeline import (
+    _infer_column_kind,
+    normalise_question,
+    run_query,
+    wait_for_audit_tasks,
+)
 from mira_api.quota.counters import period_key
 
 MAX_ROWS = 500
@@ -88,6 +93,19 @@ def _request(
     # interesa la redaccion, y asi no hace falta encolar una segunda
     # respuesta del modelo. Las pruebas de narrativa la piden explicitamente.
     return QueryRequest(question=question, countries=["cr"], narrative=narrative)
+
+
+def test_columnas_id_son_texto_no_numero() -> None:
+    # award_id/process_id son codigos como "MIRA-CR-AWARD-BA79BA102334", no
+    # enteros -- verificado en vivo contra produccion (2026-08-19), donde
+    # clasificarlas como "number" le hacia perder el dato a cualquier cliente
+    # que confiara en `kind` (esperaba un number de JS, no un string).
+    assert _infer_column_kind("award_id") == "text"
+    assert _infer_column_kind("process_id") == "text"
+    assert _infer_column_kind("row_count") == "number"
+    assert _infer_column_kind("item_count") == "number"
+    assert _infer_column_kind("awarded_amount") == "money"
+    assert _infer_column_kind("award_date") == "date"
 
 
 def test_normalise_question_recorta_y_colapsa_espacios() -> None:
