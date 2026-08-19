@@ -7,7 +7,7 @@ from mira_api.api.schemas import QueryRequest
 from mira_api.audit.outcomes import Outcome
 from mira_api.db.executor import Rows
 from mira_api.llm.client import Completion
-from mira_api.nlq.pipeline import normalise_question, run_query
+from mira_api.nlq.pipeline import normalise_question, run_query, wait_for_audit_tasks
 from mira_api.quota.counters import period_key
 
 MAX_ROWS = 500
@@ -53,11 +53,22 @@ class _FakeLogExecutor:
 
     def __init__(self) -> None:
         self._counters: dict[tuple[str, str, str], dict[str, float]] = {}
+        #: Renglones que el escritor de auditoria (Hito 4) hubiera insertado --
+        #: expuestos para que las pruebas de auditoria los inspeccionen.
+        self.query_log_rows: list[dict] = []
+        self.query_attempt_rows: list[dict] = []
+        self._next_query_log_id = 1
 
     async def fetch_one(self, sql: str, params: dict | None = None) -> dict | None:
         params = params or {}
+        lowered = sql.lower()
+        if "analytics.query_log" in lowered:
+            row = {"id": self._next_query_log_id, **params}
+            self.query_log_rows.append(row)
+            self._next_query_log_id += 1
+            return {"id": row["id"]}
         key = (params.get("subject_key"), params.get("period_type"), params.get("period_key"))
-        if "insert into" in sql.lower():
+        if "insert into" in lowered:
             state = self._counters.setdefault(key, {"query_count": 0, "spent_usd": 0.0})
             state["query_count"] += 1
             state["spent_usd"] += float(params.get("cost_usd", 0.0))
@@ -66,7 +77,8 @@ class _FakeLogExecutor:
         return dict(state) if state is not None else None
 
     async def execute(self, sql: str, params: dict | None = None) -> None:
-        return None
+        if params is not None and "analytics.query_attempt" in sql.lower():
+            self.query_attempt_rows.append(dict(params))
 
 
 def _request(
@@ -110,6 +122,9 @@ async def test_pregunta_respondible_devuelve_filas_reales() -> None:
         max_rows=MAX_ROWS,
         budget_daily_usd=BUDGET_DAILY,
         budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
     )
 
     assert response.outcome is Outcome.OK
@@ -142,6 +157,9 @@ async def test_cero_filas_es_ok_zero_rows_no_error() -> None:
         max_rows=MAX_ROWS,
         budget_daily_usd=BUDGET_DAILY,
         budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
     )
 
     assert response.outcome is Outcome.OK_ZERO_ROWS
@@ -164,6 +182,9 @@ async def test_pregunta_fuera_de_dominio_no_ejecuta_nada() -> None:
         max_rows=MAX_ROWS,
         budget_daily_usd=BUDGET_DAILY,
         budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
     )
 
     assert response.outcome is Outcome.OUT_OF_SCOPE
@@ -190,6 +211,9 @@ async def test_sql_irrecuperable_no_ejecuta_nada() -> None:
         max_rows=MAX_ROWS,
         budget_daily_usd=BUDGET_DAILY,
         budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
     )
 
     assert response.outcome is Outcome.REJECTED_SQL_RELATION
@@ -214,6 +238,9 @@ async def test_timeout_de_base_de_datos_se_reporta_como_tal() -> None:
         max_rows=MAX_ROWS,
         budget_daily_usd=BUDGET_DAILY,
         budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
     )
 
     assert response.outcome is Outcome.FAILED_DB_TIMEOUT
@@ -257,6 +284,9 @@ async def test_presupuesto_agotado_bloquea_antes_de_llamar_al_modelo() -> None:
         max_rows=MAX_ROWS,
         budget_daily_usd=2.5,
         budget_monthly_usd=75.0,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
     )
 
     assert response.outcome is Outcome.THROTTLED_BUDGET
@@ -287,6 +317,9 @@ async def test_gasto_real_se_registra_despues_de_generar() -> None:
         max_rows=MAX_ROWS,
         budget_daily_usd=BUDGET_DAILY,
         budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
     )
 
     # 100 tokens de entrada + 20 de salida a precio de Sonnet 5 ($3/$15 por
@@ -327,6 +360,9 @@ async def test_narrativa_verificada_se_incluye_en_la_respuesta() -> None:
         max_rows=MAX_ROWS,
         budget_daily_usd=BUDGET_DAILY,
         budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
     )
 
     assert response.outcome is Outcome.OK
@@ -360,6 +396,9 @@ async def test_narrativa_alucinada_degrada_el_outcome_sin_perder_los_datos() -> 
         max_rows=MAX_ROWS,
         budget_daily_usd=BUDGET_DAILY,
         budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
     )
 
     # Metrica bloqueante: el outcome se degrada, pero los datos siguen ahi.
@@ -390,7 +429,227 @@ async def test_sin_pedir_narrativa_no_se_llama_al_modelo_de_redaccion() -> None:
         max_rows=MAX_ROWS,
         budget_daily_usd=BUDGET_DAILY,
         budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
     )
 
     assert response.narrative is None
     assert response.outcome is Outcome.OK
+
+
+# --- Registro de auditoria (Hito 4) ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_consulta_ok_escribe_query_log_y_un_query_attempt_aceptado() -> None:
+    client = _ScriptedClient(
+        ["select process_id from query.v_process where country_code = 'CR'"]
+    )
+    executor = _ScriptedExecutor(
+        result=Rows(
+            columns=["process_id"], rows=[{"process_id": "p1"}], row_count=1, truncated=False
+        )
+    )
+    log_executor = _FakeLogExecutor()
+
+    await run_query(
+        _request(),
+        client=client,  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        log_executor=log_executor,  # type: ignore[arg-type]
+        system_blocks=[],
+        model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY,
+        budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
+    )
+    await wait_for_audit_tasks()
+
+    assert len(log_executor.query_log_rows) == 1
+    logged = log_executor.query_log_rows[0]
+    assert logged["subject_key"] == "test-subject"
+    assert logged["outcome"] == Outcome.OK.value
+    assert logged["attempt_count"] == 1
+
+    assert len(log_executor.query_attempt_rows) == 1
+    attempt = log_executor.query_attempt_rows[0]
+    assert attempt["attempt_number"] == 1
+    assert attempt["outcome"] == Outcome.OK.value
+    assert attempt["row_count"] == 1
+    assert attempt["rejection_rule"] is None
+
+
+@pytest.mark.asyncio
+async def test_sql_irrecuperable_escribe_un_query_attempt_por_intento_rechazado() -> None:
+    from mira_api.nlq.sql_generation import MAX_ATTEMPTS
+
+    client = _ScriptedClient(["select * from mart.processes"] * MAX_ATTEMPTS)
+    executor = _ScriptedExecutor(error=AssertionError("no deberia ejecutarse"))
+    log_executor = _FakeLogExecutor()
+
+    await run_query(
+        _request(),
+        client=client,  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        log_executor=log_executor,  # type: ignore[arg-type]
+        system_blocks=[],
+        model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY,
+        budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
+    )
+    await wait_for_audit_tasks()
+
+    assert len(log_executor.query_log_rows) == 1
+    assert log_executor.query_log_rows[0]["outcome"] == Outcome.REJECTED_SQL_RELATION.value
+
+    assert len(log_executor.query_attempt_rows) == MAX_ATTEMPTS
+    for attempt in log_executor.query_attempt_rows:
+        assert attempt["outcome"] == Outcome.REJECTED_SQL_RELATION.value
+        assert attempt["rejection_rule"] == "forbidden_schema"
+        assert attempt["row_count"] is None
+
+
+@pytest.mark.asyncio
+async def test_presupuesto_agotado_escribe_query_log_sin_intentos() -> None:
+    executor = _ScriptedExecutor(error=AssertionError("no deberia ejecutarse"))
+    log_executor = _FakeLogExecutor()
+    await log_executor.fetch_one(
+        "insert into analytics.quota_counters ...",
+        {
+            "subject_key": "GLOBAL",
+            "period_type": "DAY",
+            "period_key": period_key("DAY"),
+            "cost_usd": 999.0,
+        },
+    )
+
+    await run_query(
+        _request(),
+        client=_RaisingClient(),  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        log_executor=log_executor,  # type: ignore[arg-type]
+        system_blocks=[],
+        model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS,
+        budget_daily_usd=2.5,
+        budget_monthly_usd=75.0,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
+    )
+    await wait_for_audit_tasks()
+
+    assert len(log_executor.query_log_rows) == 1
+    assert log_executor.query_log_rows[0]["outcome"] == Outcome.THROTTLED_BUDGET.value
+    assert log_executor.query_attempt_rows == []
+
+
+# --- Streaming (Hito 7): callback on_event -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_event_reporta_las_fases_en_orden_para_una_consulta_ok() -> None:
+    client = _ScriptedClient(
+        [
+            "select count(*) as total from query.v_process where country_code = 'CR'",
+            "Se encontraron 7992 procesos.",
+        ]
+    )
+    executor = _ScriptedExecutor(
+        result=Rows(columns=["total"], rows=[{"total": 7992}], row_count=1, truncated=False)
+    )
+    events: list[tuple[str, dict]] = []
+
+    await run_query(
+        _request(narrative=True),
+        client=client,  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
+        system_blocks=[],
+        model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY,
+        budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
+        on_event=lambda event, data: events.append((event, data)),
+    )
+
+    assert [e for e, _ in events] == ["sql", "row_count", "rows", "narrative", "done"]
+    assert "query.v_process" in events[0][1]["sql"]
+    assert events[1][1] == {"row_count": 1, "truncated": False}
+    assert events[2][1]["rows"] == [{"total": 7992}]
+    assert events[3][1]["text"] == "Se encontraron 7992 procesos."
+    assert events[3][1]["verified"] is True
+    assert events[4][1]["outcome"] == Outcome.OK.value
+
+
+@pytest.mark.asyncio
+async def test_on_event_reporta_error_y_done_para_fuera_de_dominio() -> None:
+    client = _ScriptedClient(["OUT_OF_SCOPE"])
+    executor = _ScriptedExecutor(error=AssertionError("no deberia ejecutarse"))
+    events: list[tuple[str, dict]] = []
+
+    await run_query(
+        _request("cual es la capital de Francia"),
+        client=client,  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
+        system_blocks=[],
+        model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY,
+        budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
+        on_event=lambda event, data: events.append((event, data)),
+    )
+
+    assert [e for e, _ in events] == ["error", "done"]
+    assert events[0][1]["outcome"] == Outcome.OUT_OF_SCOPE.value
+    assert events[1][1]["outcome"] == Outcome.OUT_OF_SCOPE.value
+
+
+@pytest.mark.asyncio
+async def test_on_event_no_reporta_narrativa_si_no_se_pidio() -> None:
+    client = _ScriptedClient(
+        ["select count(*) as total from query.v_process where country_code = 'CR'"]
+    )
+    executor = _ScriptedExecutor(
+        result=Rows(columns=["total"], rows=[{"total": 7992}], row_count=1, truncated=False)
+    )
+    events: list[tuple[str, dict]] = []
+
+    await run_query(
+        _request(narrative=False),
+        client=client,  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
+        system_blocks=[],
+        model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY,
+        budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
+        on_event=lambda event, data: events.append((event, data)),
+    )
+
+    assert [e for e, _ in events] == ["sql", "row_count", "rows", "done"]

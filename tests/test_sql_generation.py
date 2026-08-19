@@ -130,13 +130,17 @@ async def test_falla_despues_de_agotar_los_intentos() -> None:
     # tiene que ver lo que realmente se gasto.
     assert err.value.usage.input_tokens == 100 * MAX_ATTEMPTS
     assert len(client.calls) == MAX_ATTEMPTS
+    # Hito 4: cada intento (con su rechazo) viaja en la excepcion para poder
+    # escribir analytics.query_attempt aunque la generacion falle del todo.
+    assert len(err.value.attempts) == MAX_ATTEMPTS
+    assert all(a.outcome is Outcome.REJECTED_SQL_RELATION for a in err.value.attempts)
 
 
 @pytest.mark.asyncio
 async def test_out_of_scope_no_reintenta() -> None:
     client = _ScriptedClient(["OUT_OF_SCOPE"])
 
-    with pytest.raises(OutOfScope):
+    with pytest.raises(OutOfScope) as err:
         await generate_validated_sql(
             client,  # type: ignore[arg-type]
             model="claude-sonnet-5",
@@ -147,6 +151,8 @@ async def test_out_of_scope_no_reintenta() -> None:
         )
 
     assert len(client.calls) == 1
+    assert len(err.value.attempts) == 1
+    assert err.value.attempts[0].outcome is Outcome.OUT_OF_SCOPE
 
 
 @pytest.mark.asyncio

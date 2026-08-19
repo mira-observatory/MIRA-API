@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from mira_api.audit.outcomes import Outcome
 from mira_api.llm.client import ClaudeClient
 from mira_api.nlq.semantic_dictionary import ColumnDoc, format_for_prompt
 from mira_api.nlq.validator import SqlRejected, ValidatedSql, validate
@@ -50,9 +51,10 @@ class OutOfScope(Exception):
     """El modelo determino que la pregunta no es respondible con el esquema
     disponible. No es un error -- es el sistema funcionando."""
 
-    def __init__(self, question: str, usage: Usage) -> None:
+    def __init__(self, question: str, usage: Usage, attempts: list[GenerationAttempt]) -> None:
         super().__init__(question)
         self.usage = usage
+        self.attempts = attempts
 
 
 class GenerationFailed(Exception):
@@ -61,12 +63,15 @@ class GenerationFailed(Exception):
     el uso acumulado de TODOS los intentos -- un reintento tambien gasta
     tokens, el presupuesto tiene que contarlos aunque la generacion falle."""
 
-    def __init__(self, last_rejection: SqlRejected, usage: Usage) -> None:
+    def __init__(
+        self, last_rejection: SqlRejected, usage: Usage, attempts: list[GenerationAttempt]
+    ) -> None:
         super().__init__(str(last_rejection))
         self.outcome = last_rejection.outcome
         self.rule = last_rejection.rule
         self.detail = last_rejection.detail
         self.usage = usage
+        self.attempts = attempts
 
 
 @dataclass(frozen=True)
@@ -76,6 +81,10 @@ class GenerationAttempt:
     accepted: bool
     rejection_rule: str | None = None
     rejection_detail: str | None = None
+    #: Codigo de la taxonomia (Outcome) para intentos rechazados. None en un
+    #: intento aceptado -- el resultado final (OK/FAILED_DB_*/...) solo se
+    #: conoce despues de ejecutar, y lo completa quien llama (pipeline.py).
+    outcome: Outcome | None = None
 
 
 @dataclass(frozen=True)
@@ -171,8 +180,12 @@ async def generate_validated_sql(
         sql_text = _strip_markdown_fence(raw)
 
         if sql_text.strip().upper() == OUT_OF_SCOPE_SENTINEL:
-            attempts.append(GenerationAttempt(attempt_no, sql_text, accepted=False))
-            raise OutOfScope(question, usage)
+            attempts.append(
+                GenerationAttempt(
+                    attempt_no, sql_text, accepted=False, outcome=Outcome.OUT_OF_SCOPE
+                )
+            )
+            raise OutOfScope(question, usage, attempts)
 
         try:
             validated = validate(sql_text, max_rows=max_rows, countries=countries)
@@ -184,10 +197,11 @@ async def generate_validated_sql(
                     accepted=False,
                     rejection_rule=err.rule,
                     rejection_detail=err.detail,
+                    outcome=err.outcome,
                 )
             )
             if attempt_no == MAX_ATTEMPTS:
-                raise GenerationFailed(err, usage) from err
+                raise GenerationFailed(err, usage, attempts) from err
             messages.append({"role": "assistant", "content": raw})
             messages.append(
                 {
