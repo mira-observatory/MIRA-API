@@ -70,7 +70,7 @@ class Outcome(StrEnum):
 
 
 #: Codigos que alimentan `analytics.v_unanswered`, la vista que es literalmente el
-#: backlog del producto. v1 no tiene catalogo: el registro de estas preguntas es la
+#: backlog del producto. No hay catalogo: el registro de estas preguntas es la
 #: materia prima con la que despues se construira el catalogo de consultas
 #: parametrizadas (seccion 1.4).
 UNANSWERED_OUTCOMES: frozenset[Outcome] = frozenset(

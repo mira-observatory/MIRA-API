@@ -6,8 +6,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from mira_api.api.routes import router
 from mira_api.config import get_settings
-from mira_api.db.pool import build_log_pool, build_read_pool
+from mira_api.db.pool import build_log_pool, build_read_pool, build_web_pool
 
 
 @asynccontextmanager
@@ -16,13 +17,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
     app.state.read_pool = build_read_pool(settings)
     app.state.log_pool = build_log_pool(settings)
+    app.state.web_pool = build_web_pool(settings)
     await app.state.read_pool.open()
     await app.state.log_pool.open()
+    await app.state.web_pool.open()
     try:
         yield
     finally:
         await app.state.read_pool.close()
         await app.state.log_pool.close()
+        await app.state.web_pool.close()
 
 
 app = FastAPI(
@@ -43,6 +47,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(router)
+
 
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
@@ -50,5 +56,5 @@ async def healthz() -> dict[str, str]:
 
 
 # Los endpoints de consulta se incorporan en la fase 1:
-#   POST /v1/query, POST /v1/query/stream, GET /v1/entities/resolve,
-#   GET /v1/coverage, GET /v1/quota, POST /v1/feedback
+#   POST /query, POST /query/stream, GET /entities/resolve,
+#   GET /quota, POST /feedback

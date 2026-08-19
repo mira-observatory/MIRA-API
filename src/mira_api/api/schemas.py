@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -127,3 +128,48 @@ class FeedbackRequest(BaseModel):
     query_id: UUID
     kind: Literal["USEFUL", "NOT_USEFUL", "WRONG_NUMBER", "WRONG_ENTITY", "MISSING_DATA"]
     comment: str | None = Field(default=None, max_length=1000)
+
+
+class CoverageSource(BaseModel):
+    source_key: str
+    source_system: str
+    display_name: str
+    status: Literal["ACTIVE", "PLANNED", "INACTIVE"]
+    process_count: int
+    buyer_count: int
+    supplier_count: int
+    coverage_from: date | None = None
+    coverage_to: date | None = None
+    complete_process_count: int
+    partial_process_count: int
+    process_without_date_count: int
+    last_successful_load_at: datetime | None = None
+    refreshed_at: datetime | None = None
+
+
+class CoverageCountry(BaseModel):
+    country_code: str
+    status: Literal["ACTIVE", "PLANNED", "INACTIVE"]
+    active_sources: int
+    process_count: int
+    buyer_count: int
+    supplier_count: int
+    coverage_from: date | None = None
+    coverage_to: date | None = None
+    last_successful_load_at: datetime | None = None
+    sources: list[CoverageSource] = Field(default_factory=list)
+
+
+class CoverageSummary(BaseModel):
+    active_countries: int
+    planned_countries: int
+    active_sources: int
+    process_count: int
+    coverage_from: date | None = None
+    coverage_to: date | None = None
+    last_successful_load_at: datetime | None = None
+
+
+class CoverageResponse(BaseModel):
+    summary: CoverageSummary
+    countries: list[CoverageCountry] = Field(default_factory=list)

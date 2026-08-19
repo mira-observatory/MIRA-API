@@ -36,7 +36,7 @@ En construccion. Fase 0 del plan de arquitectura.
 
 ## Arquitectura
 
-v1 no tiene catalogo de consultas predefinidas: toda pregunta contestable se
+La version actual no tiene catalogo de consultas predefinidas: toda pregunta contestable se
 responde con SQL generado por el modelo, validado programaticamente antes de
 ejecutarse. Cada consulta -la pregunta, el SQL generado, si fue aceptada o
 rechazada y por que, cuantas filas devolvio- se guarda en `analytics.*`. Ese
@@ -93,11 +93,25 @@ Pruebas y calidad:
 | `src/mira_api/nlq/` | Resolucion de entidades, validador de SQL, pipeline de generacion |
 | `src/mira_api/audit/` | Registro de consultas para auditoria y mejora continua |
 
+### Cobertura publica
+
+`GET /coverage` es un endpoint determinista respaldado por una consulta SQL
+constante sobre `web.coverage_sources`. Usa su propio pool y el rol `mira_web`;
+no invoca modelos, no consume cuota y no pasa por el validador de SQL generado.
+
+Las tres conexiones del servicio tienen privilegios separados:
+
+| Variable | Rol | Acceso |
+|---|---|---|
+| `DATABASE_URL` | `mira_query` | Vistas permitidas de `query` para NLQ |
+| `DATABASE_URL_WEB` | `mira_web` | `web.coverage_sources` |
+| `DATABASE_URL_LOG` | `mira_logger` | Escritura de auditoria en `analytics` |
+
 ## Lo que este repositorio nunca hace
 
 - **Nunca ejecuta DDL.** Todo el esquema, las vistas de consulta y los roles viven
   en `MIRA-ETL/sql/`.
-- **No tiene catalogo de consultas predefinidas en v1.** Toda pregunta contestable
+- **No tiene catalogo de consultas predefinidas.** Toda pregunta contestable
   se responde con SQL generado por el modelo y validado antes de ejecutarse. El
   catalogo, si llega, se derivara despues del registro de auditoria.
 - **Nunca normaliza nombres de entidades.** Esa logica es del ETL; aqui se consumen
