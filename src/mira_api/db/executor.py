@@ -4,8 +4,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
+
+#: Reexportadas para que quien llama pueda distinguir FAILED_DB_TIMEOUT de
+#: FAILED_DB_ERROR sin importar psycopg directamente -- esta es la unica
+#: frontera del servicio que lo hace.
+QueryTimeout = psycopg.errors.QueryCanceled
+DatabaseError = psycopg.Error
 
 
 @dataclass(frozen=True)

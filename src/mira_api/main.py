@@ -9,11 +9,15 @@ from typing import Literal
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from mira_api.api.schemas import EntityCandidate
+from mira_api.api.schemas import EntityCandidate, QueryRequest, QueryResponse
 from mira_api.config import get_settings
 from mira_api.db.executor import ReadOnlyExecutor
 from mira_api.db.pool import build_log_pool, build_read_pool
+from mira_api.llm.client import ClaudeClient
 from mira_api.nlq.entities import resolve_entities
+from mira_api.nlq.pipeline import run_query
+from mira_api.nlq.semantic_dictionary import load_semantic_dictionary
+from mira_api.nlq.sql_generation import build_system_blocks
 
 # psycopg async no funciona sobre el ProactorEventLoop, el default de Windows
 # desde Python 3.8 -- falla en silencio con PoolTimeout, no con un error claro.
@@ -32,6 +36,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await app.state.read_pool.open()
     await app.state.log_pool.open()
     app.state.executor = ReadOnlyExecutor(app.state.read_pool)
+
+    app.state.claude_client = ClaudeClient(api_key=settings.anthropic_api_key)
+    # El diccionario semantico se carga una sola vez al arrancar (T3.3): es el
+    # contenido estable del prompt de generacion de SQL, y va marcado para
+    # cacheo. Un cambio en MIRA-ETL se refleja al reiniciar el servicio, no
+    # en caliente -- coherente con que ese diccionario cambia rara vez.
+    columns = await load_semantic_dictionary(app.state.executor)
+    app.state.sql_system_blocks = build_system_blocks(columns)
+
     try:
         yield
     finally:
@@ -78,6 +91,22 @@ async def entities_resolve(
     )
 
 
+@app.post("/v1/query")
+async def query(request: QueryRequest) -> QueryResponse:
+    """Traduce una pregunta en espanol a SQL validado, lo ejecuta, y devuelve
+    filas reales. Sin redaccion todavia (T3.5/T3.6): los datos se entregan
+    solos, que es exactamente lo que el plan pide que pase aunque no haya
+    parrafo."""
+    settings = app.state.settings
+    return await run_query(
+        request,
+        client=app.state.claude_client,
+        executor=app.state.executor,
+        system_blocks=app.state.sql_system_blocks,
+        model=settings.sql_model,
+        max_rows=settings.max_rows,
+    )
+
+
 # Los endpoints restantes se incorporan en fases siguientes:
-#   POST /v1/query, POST /v1/query/stream, GET /v1/coverage, GET /v1/quota,
-#   POST /v1/feedback
+#   POST /v1/query/stream, GET /v1/coverage, GET /v1/quota, POST /v1/feedback

@@ -1,0 +1,150 @@
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from mira_api.audit.outcomes import Outcome
+from mira_api.nlq.sql_generation import (
+    MAX_ATTEMPTS,
+    OutOfScope,
+    _strip_markdown_fence,
+    build_system_blocks,
+    generate_validated_sql,
+)
+from mira_api.nlq.validator import SqlRejected
+
+MAX_ROWS = 500
+
+
+class _ScriptedClient:
+    """Reemplaza ClaudeClient sin llamar a la API real. Devuelve las
+    respuestas en orden y graba los mensajes de cada llamada, para poder
+    verificar que la retroalimentacion del validador viaja al modelo."""
+
+    def __init__(self, responses: list[str]) -> None:
+        self._responses = list(responses)
+        self.calls: list[list[dict[str, Any]]] = []
+
+    async def complete_text(
+        self,
+        *,
+        model: str,
+        system: list[dict[str, object]],
+        messages: list[dict[str, object]],
+        max_tokens: int,
+    ) -> str:
+        self.calls.append([dict(m) for m in messages])
+        if not self._responses:
+            raise AssertionError("se agotaron las respuestas guionadas")
+        return self._responses.pop(0)
+
+
+def test_strip_markdown_fence() -> None:
+    assert _strip_markdown_fence("```sql\nselect 1\n```") == "select 1"
+    assert _strip_markdown_fence("```\nselect 1\n```") == "select 1"
+    assert _strip_markdown_fence("select 1") == "select 1"
+
+
+def test_build_system_blocks_marca_cache_control() -> None:
+    blocks = build_system_blocks([])
+    assert len(blocks) == 1
+    assert blocks[0]["cache_control"] == {"type": "ephemeral"}
+
+
+@pytest.mark.asyncio
+async def test_acepta_sql_valido_en_el_primer_intento() -> None:
+    client = _ScriptedClient(["select process_id from query.v_process"])
+
+    result = await generate_validated_sql(
+        client,  # type: ignore[arg-type]
+        model="claude-sonnet-5",
+        system=[],
+        question="dame procesos",
+        countries=["CR"],
+        max_rows=MAX_ROWS,
+    )
+
+    assert len(result.attempts) == 1
+    assert result.attempts[0].accepted
+    assert "query.v_process" in result.validated.relations
+    assert len(client.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_reintenta_con_la_retroalimentacion_del_validador() -> None:
+    client = _ScriptedClient(
+        [
+            "select * from mart.processes",  # rechazado: esquema privado
+            "select process_id from query.v_process",  # aceptado
+        ]
+    )
+
+    result = await generate_validated_sql(
+        client,  # type: ignore[arg-type]
+        model="claude-sonnet-5",
+        system=[],
+        question="dame procesos",
+        countries=["CR"],
+        max_rows=MAX_ROWS,
+    )
+
+    assert len(result.attempts) == 2
+    assert not result.attempts[0].accepted
+    assert result.attempts[0].rejection_rule is not None
+    assert result.attempts[1].accepted
+
+    # El segundo intento debe llevar el SQL rechazado y el motivo como contexto.
+    second_call_messages = client.calls[1]
+    assert any("rechazado" in str(m.get("content", "")) for m in second_call_messages)
+    assert any("mart.processes" in str(m.get("content", "")) for m in second_call_messages)
+
+
+@pytest.mark.asyncio
+async def test_falla_despues_de_agotar_los_intentos() -> None:
+    client = _ScriptedClient(["select * from mart.processes"] * MAX_ATTEMPTS)
+
+    with pytest.raises(SqlRejected) as err:
+        await generate_validated_sql(
+            client,  # type: ignore[arg-type]
+            model="claude-sonnet-5",
+            system=[],
+            question="dame lo que sea",
+            countries=["CR"],
+            max_rows=MAX_ROWS,
+        )
+
+    assert err.value.outcome is Outcome.REJECTED_SQL_RELATION
+    assert len(client.calls) == MAX_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_out_of_scope_no_reintenta() -> None:
+    client = _ScriptedClient(["OUT_OF_SCOPE"])
+
+    with pytest.raises(OutOfScope):
+        await generate_validated_sql(
+            client,  # type: ignore[arg-type]
+            model="claude-sonnet-5",
+            system=[],
+            question="cual es la capital de Francia",
+            countries=["CR"],
+            max_rows=MAX_ROWS,
+        )
+
+    assert len(client.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_out_of_scope_tolera_espacios_y_mayusculas() -> None:
+    client = _ScriptedClient(["  out_of_scope  "])
+
+    with pytest.raises(OutOfScope):
+        await generate_validated_sql(
+            client,  # type: ignore[arg-type]
+            model="claude-sonnet-5",
+            system=[],
+            question="cualquier cosa",
+            countries=["CR"],
+            max_rows=MAX_ROWS,
+        )
