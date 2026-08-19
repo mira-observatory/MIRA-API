@@ -95,10 +95,9 @@ async def entities_resolve(
 
 @app.post("/v1/query")
 async def query(request: QueryRequest) -> QueryResponse:
-    """Traduce una pregunta en espanol a SQL validado, lo ejecuta, y devuelve
-    filas reales. Sin redaccion todavia (T3.5/T3.6): los datos se entregan
-    solos, que es exactamente lo que el plan pide que pase aunque no haya
-    parrafo."""
+    """Traduce una pregunta en espanol a SQL validado, lo ejecuta, devuelve
+    filas reales y las redacta en prosa verificada -- pero la tabla es la
+    respuesta, el parrafo es un acompanante prescindible."""
     settings = app.state.settings
     return await run_query(
         request,
@@ -107,6 +106,7 @@ async def query(request: QueryRequest) -> QueryResponse:
         log_executor=app.state.log_executor,
         system_blocks=app.state.sql_system_blocks,
         model=settings.sql_model,
+        narrative_model=settings.model_fast,
         max_rows=settings.max_rows,
         budget_daily_usd=settings.budget_daily_usd,
         budget_monthly_usd=settings.budget_monthly_usd,

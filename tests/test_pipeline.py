@@ -69,8 +69,13 @@ class _FakeLogExecutor:
         return None
 
 
-def _request(question: str = "cuantos procesos hay en CR") -> QueryRequest:
-    return QueryRequest(question=question, countries=["cr"])
+def _request(
+    question: str = "cuantos procesos hay en CR", *, narrative: bool = False
+) -> QueryRequest:
+    # narrative=False por defecto: la mayoria de estas pruebas no le
+    # interesa la redaccion, y asi no hace falta encolar una segunda
+    # respuesta del modelo. Las pruebas de narrativa la piden explicitamente.
+    return QueryRequest(question=question, countries=["cr"], narrative=narrative)
 
 
 def test_normalise_question_recorta_y_colapsa_espacios() -> None:
@@ -101,6 +106,7 @@ async def test_pregunta_respondible_devuelve_filas_reales() -> None:
         log_executor=log_executor,  # type: ignore[arg-type]
         system_blocks=[],
         model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
         max_rows=MAX_ROWS,
         budget_daily_usd=BUDGET_DAILY,
         budget_monthly_usd=BUDGET_MONTHLY,
@@ -132,6 +138,7 @@ async def test_cero_filas_es_ok_zero_rows_no_error() -> None:
         log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
         system_blocks=[],
         model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
         max_rows=MAX_ROWS,
         budget_daily_usd=BUDGET_DAILY,
         budget_monthly_usd=BUDGET_MONTHLY,
@@ -153,6 +160,7 @@ async def test_pregunta_fuera_de_dominio_no_ejecuta_nada() -> None:
         log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
         system_blocks=[],
         model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
         max_rows=MAX_ROWS,
         budget_daily_usd=BUDGET_DAILY,
         budget_monthly_usd=BUDGET_MONTHLY,
@@ -178,6 +186,7 @@ async def test_sql_irrecuperable_no_ejecuta_nada() -> None:
         log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
         system_blocks=[],
         model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
         max_rows=MAX_ROWS,
         budget_daily_usd=BUDGET_DAILY,
         budget_monthly_usd=BUDGET_MONTHLY,
@@ -201,6 +210,7 @@ async def test_timeout_de_base_de_datos_se_reporta_como_tal() -> None:
         log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
         system_blocks=[],
         model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
         max_rows=MAX_ROWS,
         budget_daily_usd=BUDGET_DAILY,
         budget_monthly_usd=BUDGET_MONTHLY,
@@ -243,6 +253,7 @@ async def test_presupuesto_agotado_bloquea_antes_de_llamar_al_modelo() -> None:
         log_executor=log_executor,  # type: ignore[arg-type]
         system_blocks=[],
         model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
         max_rows=MAX_ROWS,
         budget_daily_usd=2.5,
         budget_monthly_usd=75.0,
@@ -272,6 +283,7 @@ async def test_gasto_real_se_registra_despues_de_generar() -> None:
         log_executor=log_executor,  # type: ignore[arg-type]
         system_blocks=[],
         model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
         max_rows=MAX_ROWS,
         budget_daily_usd=BUDGET_DAILY,
         budget_monthly_usd=BUDGET_MONTHLY,
@@ -287,3 +299,98 @@ async def test_gasto_real_se_registra_despues_de_generar() -> None:
     )
     assert state is not None
     assert state["spent_usd"] > 0
+
+
+# --- Redaccion y verificacion (T3.5/T3.6) ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_narrativa_verificada_se_incluye_en_la_respuesta() -> None:
+    client = _ScriptedClient(
+        [
+            "select count(*) as total from query.v_process where country_code = 'CR'",
+            "Se encontraron 7992 procesos.",
+        ]
+    )
+    executor = _ScriptedExecutor(
+        result=Rows(columns=["total"], rows=[{"total": 7992}], row_count=1, truncated=False)
+    )
+
+    response = await run_query(
+        _request(narrative=True),
+        client=client,  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
+        system_blocks=[],
+        model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY,
+        budget_monthly_usd=BUDGET_MONTHLY,
+    )
+
+    assert response.outcome is Outcome.OK
+    assert response.narrative == "Se encontraron 7992 procesos."
+    assert response.narrative_verified is True
+    assert response.unverified_numbers == []
+
+
+@pytest.mark.asyncio
+async def test_narrativa_alucinada_degrada_el_outcome_sin_perder_los_datos() -> None:
+    from mira_api.nlq.narrative import MAX_NARRATIVE_ATTEMPTS
+
+    client = _ScriptedClient(
+        [
+            "select count(*) as total from query.v_process where country_code = 'CR'",
+            *(["Se encontraron 999999 procesos."] * MAX_NARRATIVE_ATTEMPTS),
+        ]
+    )
+    executor = _ScriptedExecutor(
+        result=Rows(columns=["total"], rows=[{"total": 7992}], row_count=1, truncated=False)
+    )
+
+    response = await run_query(
+        _request(narrative=True),
+        client=client,  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
+        system_blocks=[],
+        model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY,
+        budget_monthly_usd=BUDGET_MONTHLY,
+    )
+
+    # Metrica bloqueante: el outcome se degrada, pero los datos siguen ahi.
+    assert response.outcome is Outcome.OK_DEGRADED_NARRATIVE
+    assert response.narrative_verified is False
+    assert response.row_count == 1
+    assert response.rows == [{"total": 7992}]
+    assert response.narrative is not None  # la plantilla determinista, no None
+
+
+@pytest.mark.asyncio
+async def test_sin_pedir_narrativa_no_se_llama_al_modelo_de_redaccion() -> None:
+    client = _ScriptedClient(
+        ["select count(*) as total from query.v_process where country_code = 'CR'"]
+    )
+    executor = _ScriptedExecutor(
+        result=Rows(columns=["total"], rows=[{"total": 7992}], row_count=1, truncated=False)
+    )
+
+    response = await run_query(
+        _request(narrative=False),
+        client=client,  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
+        system_blocks=[],
+        model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY,
+        budget_monthly_usd=BUDGET_MONTHLY,
+    )
+
+    assert response.narrative is None
+    assert response.outcome is Outcome.OK

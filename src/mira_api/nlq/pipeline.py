@@ -9,6 +9,7 @@ from mira_api.audit.outcomes import Outcome
 from mira_api.db.executor import DatabaseError, QueryTimeout, ReadOnlyExecutor
 from mira_api.db.log_executor import LogExecutor
 from mira_api.llm.client import ClaudeClient, ClaudeRefusal
+from mira_api.nlq.narrative import generate_narrative
 from mira_api.nlq.sql_generation import (
     GenerationFailed,
     GenerationResult,
@@ -77,17 +78,18 @@ async def run_query(
     log_executor: LogExecutor,
     system_blocks: list[dict[str, object]],
     model: str,
+    narrative_model: str,
     max_rows: int,
     budget_daily_usd: float,
     budget_monthly_usd: float,
 ) -> QueryResponse:
     """Orquesta el pipeline completo: presupuesto -> normalizar -> generar SQL
-    -> validar (dentro de generate_validated_sql) -> ejecutar -> armar la
-    respuesta.
+    -> validar (dentro de generate_validated_sql) -> ejecutar -> redactar y
+    verificar (T3.5/T3.6) -> armar la respuesta.
 
-    No redacta ni verifica narrativa todavia (T3.5/T3.6) -- los datos se
-    entregan solos, que es exactamente lo que el plan pide que pase incluso
-    cuando la redaccion no existe.
+    La redaccion nunca bloquea la respuesta: si el verificador la descarta dos
+    veces, se sirve una plantilla determinista y narrative_verified queda en
+    False, pero las filas ya estan en la respuesta de todas formas.
     """
     query_id = uuid4()
     question = normalise_question(request.question)
@@ -182,6 +184,32 @@ async def run_query(
     timings_ms["db_ms"] = int((time.monotonic() - db_start) * 1000)
 
     outcome = Outcome.OK_ZERO_ROWS if rows_result.row_count == 0 else Outcome.OK
+
+    narrative_text: str | None = None
+    narrative_verified = False
+    unverified_numbers: list[str] = []
+    if request.narrative:
+        narrative_start = time.monotonic()
+        narrative_result = await generate_narrative(
+            client,
+            model=narrative_model,
+            question=question,
+            rows=rows_result.rows,
+            row_count=rows_result.row_count,
+            truncated=rows_result.truncated,
+        )
+        timings_ms["narrative_ms"] = int((time.monotonic() - narrative_start) * 1000)
+        await _charge_global_budget(
+            log_executor, model=narrative_model, usage=narrative_result.usage
+        )
+        narrative_text = narrative_result.text
+        narrative_verified = narrative_result.verified
+        unverified_numbers = narrative_result.unverified_numbers
+        # Metrica bloqueante (Parte 1.12): datos entregados igual, pero la
+        # redaccion se reemplazo por la plantilla porque alucino un numero.
+        if outcome is Outcome.OK and not narrative_verified:
+            outcome = Outcome.OK_DEGRADED_NARRATIVE
+
     return QueryResponse(
         query_id=query_id,
         question=question,
@@ -193,5 +221,8 @@ async def run_query(
         rows=rows_result.rows,
         row_count=rows_result.row_count,
         truncated=rows_result.truncated,
+        narrative=narrative_text,
+        narrative_verified=narrative_verified,
+        unverified_numbers=unverified_numbers,
         timings_ms=timings_ms,
     )
