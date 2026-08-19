@@ -94,6 +94,44 @@ async def test_dos_fallos_caen_a_la_plantilla_determinista() -> None:
 
 
 @pytest.mark.asyncio
+async def test_una_redaccion_vacia_cae_a_la_plantilla() -> None:
+    """Un texto vacio pasaria el verificador sin objeciones (no hay numeros
+    que revisar) y llegaria al usuario como una respuesta en blanco."""
+    client = _ScriptedClient(["   "])
+
+    result = await generate_narrative(
+        client,  # type: ignore[arg-type]
+        model="claude-haiku-4-5-20251001",
+        question="cuanto se adjudico",
+        rows=ROWS,
+        row_count=1,
+        truncated=False,
+    )
+
+    assert result.text
+    assert result.verified is False
+
+
+@pytest.mark.asyncio
+async def test_puede_citar_el_numero_de_filas() -> None:
+    """Caso reportado: "top 10 ..." devolvia tabla sin texto porque el 10 no
+    estaba en ninguna celda."""
+    client = _ScriptedClient(["Estas son las 3 adjudicaciones mas caras."])
+
+    result = await generate_narrative(
+        client,  # type: ignore[arg-type]
+        model="claude-haiku-4-5-20251001",
+        question="top 3 adjudicaciones mas caras",
+        rows=[{"awarded_amount": 7992}],
+        row_count=3,
+        truncated=False,
+    )
+
+    assert result.verified is True
+    assert result.text == "Estas son las 3 adjudicaciones mas caras."
+
+
+@pytest.mark.asyncio
 async def test_cero_filas_no_llama_al_modelo() -> None:
     client = _ScriptedClient([])  # si se llamara, pop(0) fallaria
 

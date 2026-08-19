@@ -109,7 +109,12 @@ async def generate_narrative(
             cache_creation_tokens=completion.cache_creation_tokens,
         )
         text = completion.text.strip()
-        invalid = find_unverified_numbers(text, rows)
+        if not text:
+            # Una redaccion vacia pasaria el verificador sin objeciones (no
+            # tiene numeros que revisar) y llegaria al usuario como una
+            # respuesta en blanco. Mejor la plantilla, que al menos dice algo.
+            break
+        invalid = find_unverified_numbers(text, rows, row_count=row_count)
         if not invalid:
             return NarrativeResult(
                 text=text, verified=True, unverified_numbers=[], usage=usage

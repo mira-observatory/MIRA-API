@@ -66,12 +66,36 @@ def extract_numbers(text: str) -> set[float]:
     return found
 
 
+#: Secuencias de digitos dentro de una celda no numerica. Sin separadores ni
+#: sufijos: el contenido de una celda es literal, no prosa.
+_DIGIT_RUN_RE = re.compile(r"\d+")
+
+#: Mas alla de esto no es una cifra que alguien cite en un parrafo, y float()
+#: empieza a perder precision o a desbordar.
+_MAX_DIGITS = 18
+
+
 def _cell_to_floats(value: Any) -> set[float]:
-    if isinstance(value, bool):
+    """Numeros verificables de una celda.
+
+    Una celda no numerica tambien aporta: la fecha 2025-05-09 respalda "el 9
+    de mayo de 2025", y un titulo que dice "18 Tbps" respalda que el parrafo
+    cite 18. Sin esto, toda narrativa que mencione una fecha se marcaba como
+    alucinacion -- caso real reportado el 2026-08-19, donde una redaccion
+    correcta se descarto por escribir "adjudicada el 9 de mayo de 2025".
+
+    Sigue atrapando lo que importa: un total que el modelo calculo por su
+    cuenta no aparece en ninguna celda, ni numerica ni de texto.
+    """
+    if isinstance(value, bool) or value is None:
         return set()
     if isinstance(value, int | float | Decimal):
         return {round(float(value), 6)}
-    return set()
+    return {
+        float(run)
+        for run in _DIGIT_RUN_RE.findall(str(value))
+        if len(run) <= _MAX_DIGITS
+    }
 
 
 def allowed_values_from_rows(rows: list[dict[str, Any]]) -> set[float]:
@@ -89,13 +113,29 @@ def allowed_values_from_rows(rows: list[dict[str, Any]]) -> set[float]:
 
 
 def find_unverified_numbers(
-    narrative: str, rows: list[dict[str, Any]], *, tolerance: float = 0.01
+    narrative: str,
+    rows: list[dict[str, Any]],
+    *,
+    row_count: int | None = None,
+    tolerance: float = 0.01,
 ) -> list[str]:
     """Numeros del texto que no aparecen (ni redondeados) en ninguna celda del
     resultado. Devuelve la representacion de texto original de cada uno
     invalido, no el float normalizado -- es lo que se le muestra de vuelta al
-    modelo para que se corrija."""
+    modelo para que se corrija.
+
+    `row_count` tambien cuenta como verificado: es un hecho real del resultado
+    que el redactor recibe en el prompt (`filas_totales`), no algo que invento.
+    Sin esto, "las 10 adjudicaciones mas caras" se marcaba como alucinacion
+    porque el 10 no esta en ninguna celda -- y toda pregunta de tipo "top N"
+    terminaba con la narrativa descartada y reemplazada por la plantilla.
+
+    Sigue atrapando el caso que importa: si se piden las 20 mas caras y solo
+    existen 7, el 20 no coincide con row_count y se rechaza igual.
+    """
     allowed = allowed_values_from_rows(rows)
+    if row_count is not None:
+        allowed.add(float(row_count))
     invalid: list[str] = []
     for match in _NUMBER_RE.finditer(narrative):
         value = _normalise_numeric_literal(match.group("num"))
