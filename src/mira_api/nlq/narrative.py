@@ -30,7 +30,10 @@ calcules a mano.
 3. Si la tabla esta truncada (no muestra todas las filas), acláralo en vez \
 de hablar como si fuera el total completo.
 4. Nunca mezcles montos de monedas distintas como si fueran un solo total.
-5. Responde solo con el resumen, sin titulos ni markdown."""
+5. Responde solo con el resumen, sin titulos ni markdown.
+6. Empieza de forma conversacional, como si le hablaras directamente a la \
+persona (por ejemplo "Claro, aqui tienes..." o "Con gusto, encontre..."). \
+Nunca empieces la respuesta con un numero o una lista en seco."""
 
 
 @dataclass(frozen=True)
