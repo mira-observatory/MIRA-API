@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Literal
@@ -12,6 +14,13 @@ from mira_api.config import get_settings
 from mira_api.db.executor import ReadOnlyExecutor
 from mira_api.db.pool import build_log_pool, build_read_pool
 from mira_api.nlq.entities import resolve_entities
+
+# psycopg async no funciona sobre el ProactorEventLoop, el default de Windows
+# desde Python 3.8 -- falla en silencio con PoolTimeout, no con un error claro.
+# En Linux (produccion, Fly.io) esto es un no-op: SelectorEventLoop ya es el
+# default ahi.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 @asynccontextmanager
