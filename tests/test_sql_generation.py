@@ -5,16 +5,25 @@ from typing import Any
 import pytest
 
 from mira_api.audit.outcomes import Outcome
+from mira_api.llm.client import Completion
 from mira_api.nlq.sql_generation import (
     MAX_ATTEMPTS,
+    GenerationFailed,
     OutOfScope,
     _strip_markdown_fence,
     build_system_blocks,
     generate_validated_sql,
 )
-from mira_api.nlq.validator import SqlRejected
 
 MAX_ROWS = 500
+
+
+def _completion(text: str) -> Completion:
+    # Tokens ficticios pero no-cero: si algun bug deja de sumar el uso, una
+    # prueba que revise usage.input_tokens > 0 lo detecta.
+    return Completion(
+        text=text, input_tokens=100, output_tokens=20, cache_read_tokens=0, cache_creation_tokens=0
+    )
 
 
 class _ScriptedClient:
@@ -33,11 +42,11 @@ class _ScriptedClient:
         system: list[dict[str, object]],
         messages: list[dict[str, object]],
         max_tokens: int,
-    ) -> str:
+    ) -> Completion:
         self.calls.append([dict(m) for m in messages])
         if not self._responses:
             raise AssertionError("se agotaron las respuestas guionadas")
-        return self._responses.pop(0)
+        return _completion(self._responses.pop(0))
 
 
 def test_strip_markdown_fence() -> None:
@@ -106,7 +115,7 @@ async def test_reintenta_con_la_retroalimentacion_del_validador() -> None:
 async def test_falla_despues_de_agotar_los_intentos() -> None:
     client = _ScriptedClient(["select * from mart.processes"] * MAX_ATTEMPTS)
 
-    with pytest.raises(SqlRejected) as err:
+    with pytest.raises(GenerationFailed) as err:
         await generate_validated_sql(
             client,  # type: ignore[arg-type]
             model="claude-sonnet-5",
@@ -117,6 +126,9 @@ async def test_falla_despues_de_agotar_los_intentos() -> None:
         )
 
     assert err.value.outcome is Outcome.REJECTED_SQL_RELATION
+    # El uso se acumula por los 3 intentos, no solo el ultimo -- el presupuesto
+    # tiene que ver lo que realmente se gasto.
+    assert err.value.usage.input_tokens == 100 * MAX_ATTEMPTS
     assert len(client.calls) == MAX_ATTEMPTS
 
 

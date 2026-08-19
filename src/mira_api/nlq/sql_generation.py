@@ -50,6 +50,24 @@ class OutOfScope(Exception):
     """El modelo determino que la pregunta no es respondible con el esquema
     disponible. No es un error -- es el sistema funcionando."""
 
+    def __init__(self, question: str, usage: Usage) -> None:
+        super().__init__(question)
+        self.usage = usage
+
+
+class GenerationFailed(Exception):
+    """Se agotaron los MAX_ATTEMPTS intentos sin una consulta valida. Envuelve
+    el ultimo SqlRejected del validador (mismo outcome/rule/detail) y le suma
+    el uso acumulado de TODOS los intentos -- un reintento tambien gasta
+    tokens, el presupuesto tiene que contarlos aunque la generacion falle."""
+
+    def __init__(self, last_rejection: SqlRejected, usage: Usage) -> None:
+        super().__init__(str(last_rejection))
+        self.outcome = last_rejection.outcome
+        self.rule = last_rejection.rule
+        self.detail = last_rejection.detail
+        self.usage = usage
+
 
 @dataclass(frozen=True)
 class GenerationAttempt:
@@ -61,9 +79,28 @@ class GenerationAttempt:
 
 
 @dataclass(frozen=True)
+class Usage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+
+    def __add__(self, other: Usage) -> Usage:
+        return Usage(
+            input_tokens=self.input_tokens + other.input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
+            cache_creation_tokens=self.cache_creation_tokens + other.cache_creation_tokens,
+        )
+
+
+@dataclass(frozen=True)
 class GenerationResult:
     validated: ValidatedSql
     attempts: list[GenerationAttempt]
+    #: Suma de TODOS los intentos -- un reintento tambien cuesta tokens, el
+    #: presupuesto (Hito 5) tiene que verlo completo, no solo el ultimo.
+    usage: Usage
 
 
 def build_system_blocks(columns: list[ColumnDoc]) -> list[dict[str, object]]:
@@ -107,8 +144,9 @@ async def generate_validated_sql(
     -- eso es responsabilidad de quien llama, con el resultado ya validado.
 
     Levanta OutOfScope si el modelo determina que la pregunta no es
-    respondible, y SqlRejected si se agotan los intentos sin una consulta
-    valida (el ultimo rechazo, con su regla exacta).
+    respondible, y GenerationFailed si se agotan los intentos sin una consulta
+    valida (el ultimo rechazo, con su regla exacta). Ambas excepciones cargan
+    el uso acumulado de tokens -- un intento fallido tambien cuesta.
     """
     messages: list[dict[str, object]] = [
         {
@@ -117,16 +155,24 @@ async def generate_validated_sql(
         }
     ]
     attempts: list[GenerationAttempt] = []
+    usage = Usage()
 
     for attempt_no in range(1, MAX_ATTEMPTS + 1):
-        raw = await client.complete_text(
+        completion = await client.complete_text(
             model=model, system=system, messages=messages, max_tokens=max_tokens
         )
+        usage = usage + Usage(
+            input_tokens=completion.input_tokens,
+            output_tokens=completion.output_tokens,
+            cache_read_tokens=completion.cache_read_tokens,
+            cache_creation_tokens=completion.cache_creation_tokens,
+        )
+        raw = completion.text
         sql_text = _strip_markdown_fence(raw)
 
         if sql_text.strip().upper() == OUT_OF_SCOPE_SENTINEL:
             attempts.append(GenerationAttempt(attempt_no, sql_text, accepted=False))
-            raise OutOfScope(question)
+            raise OutOfScope(question, usage)
 
         try:
             validated = validate(sql_text, max_rows=max_rows, countries=countries)
@@ -141,7 +187,7 @@ async def generate_validated_sql(
                 )
             )
             if attempt_no == MAX_ATTEMPTS:
-                raise
+                raise GenerationFailed(err, usage) from err
             messages.append({"role": "assistant", "content": raw})
             messages.append(
                 {
@@ -156,7 +202,7 @@ async def generate_validated_sql(
             continue
 
         attempts.append(GenerationAttempt(attempt_no, sql_text, accepted=True))
-        return GenerationResult(validated=validated, attempts=attempts)
+        return GenerationResult(validated=validated, attempts=attempts, usage=usage)
 
     # Inalcanzable: el ultimo intento siempre re-lanza o retorna arriba.
     raise AssertionError("generate_validated_sql: bucle de intentos mal formado")

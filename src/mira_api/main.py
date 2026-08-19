@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from mira_api.api.schemas import EntityCandidate, QueryRequest, QueryResponse
 from mira_api.config import get_settings
 from mira_api.db.executor import ReadOnlyExecutor
+from mira_api.db.log_executor import LogExecutor
 from mira_api.db.pool import build_log_pool, build_read_pool
 from mira_api.llm.client import ClaudeClient
 from mira_api.nlq.entities import resolve_entities
@@ -36,6 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await app.state.read_pool.open()
     await app.state.log_pool.open()
     app.state.executor = ReadOnlyExecutor(app.state.read_pool)
+    app.state.log_executor = LogExecutor(app.state.log_pool)
 
     app.state.claude_client = ClaudeClient(api_key=settings.anthropic_api_key)
     # El diccionario semantico se carga una sola vez al arrancar (T3.3): es el
@@ -102,9 +104,12 @@ async def query(request: QueryRequest) -> QueryResponse:
         request,
         client=app.state.claude_client,
         executor=app.state.executor,
+        log_executor=app.state.log_executor,
         system_blocks=app.state.sql_system_blocks,
         model=settings.sql_model,
         max_rows=settings.max_rows,
+        budget_daily_usd=settings.budget_daily_usd,
+        budget_monthly_usd=settings.budget_monthly_usd,
     )
 
 

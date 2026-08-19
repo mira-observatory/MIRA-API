@@ -47,8 +47,14 @@ class Settings(BaseSettings):
     max_rows: int = 500
     quota_per_day: int = 5
     quota_per_month: int = 15
-    budget_daily_usd: float = 3.5
-    budget_monthly_usd: float = 100.0
+    #: Presupuesto inicial (2026-08-18): $75/mes, repartido parejo en el mes.
+    budget_daily_usd: float = 2.5
+    budget_monthly_usd: float = 75.0
+    #: Cortacircuito global (dia + mes) SIEMPRE esta activo -- protege el gasto.
+    #: La cuota POR SUJETO (T5.1/T5.2) esta escrita pero deliberadamente inactiva:
+    #: decision de producto (2026-08-18) de no limitar por usuario todavia. Se activa
+    #: cambiando esta bandera, sin tocar el resto del codigo.
+    enable_subject_quota: bool = False
 
     # --- versionado, para atribuir regresiones -----------------------------
     prompt_version: str = "0.1.0"
