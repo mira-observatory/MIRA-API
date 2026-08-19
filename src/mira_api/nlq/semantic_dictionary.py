@@ -4,13 +4,22 @@ from dataclasses import dataclass
 from typing import Any
 
 from mira_api.db.executor import ReadOnlyExecutor
+from mira_api.nlq.validator import ALLOWED_RELATIONS
 
 #: query.semantic_dictionary no esta en ALLOWED_RELATIONS -- el modelo nunca la
 #: consulta por SQL, solo la lee este loader al arrancar el servicio.
+#:
+#: El filtro por view_name no es cosmetico: MIRA-ETL documenta vistas que el
+#: validador no permite (query.v_coverage, metadatos de las corridas del ETL).
+#: Describirselas al modelo garantizaba el peor final posible -- generaba SQL
+#: contra ellas, el validador lo rechazaba, y se gastaban los 3 intentos para
+#: terminar en REJECTED_SQL_RELATION. El prompt solo describe lo que el
+#: validador acepta, y ALLOWED_RELATIONS es la unica fuente de esa lista.
 _SELECT_SQL = """
     select view_name, column_name, description_es, data_type,
            enum_values, unit, is_aggregable, caveat
     from query.semantic_dictionary
+    where view_name = any(%(allowed)s)
     order by view_name, column_name
 """
 
@@ -32,7 +41,9 @@ async def load_semantic_dictionary(executor: ReadOnlyExecutor) -> list[ColumnDoc
     (T3.3): MIRA-API nunca escribe una segunda descripcion de las columnas a
     mano, porque dos copias se desalinean en silencio -- MIRA-ETL es la unica
     fuente de verdad para este texto."""
-    result = await executor.run(_SELECT_SQL, max_rows=1000)
+    result = await executor.run(
+        _SELECT_SQL, max_rows=1000, params={"allowed": sorted(ALLOWED_RELATIONS)}
+    )
     return [_row_to_doc(row) for row in result.rows]
 
 

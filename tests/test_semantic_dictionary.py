@@ -2,15 +2,18 @@ from __future__ import annotations
 
 from mira_api.db.executor import Rows
 from mira_api.nlq.semantic_dictionary import ColumnDoc, format_for_prompt, load_semantic_dictionary
+from mira_api.nlq.validator import ALLOWED_RELATIONS
 
 
 class _FakeExecutor:
     def __init__(self, rows: list[dict[str, object]]) -> None:
         self._rows = rows
+        self.last_params: dict[str, object] | None = None
 
     async def run(
         self, sql: str, *, max_rows: int, params: dict[str, object] | None = None
     ) -> Rows:
+        self.last_params = params
         return Rows(columns=[], rows=self._rows, row_count=len(self._rows), truncated=False)
 
 
@@ -80,3 +83,18 @@ async def test_load_semantic_dictionary_mapea_las_columnas_reales() -> None:
     assert len(columns) == 1
     assert columns[0].view_name == "query.v_process"
     assert columns[0].column_name == "process_id"
+
+
+async def test_solo_pide_las_vistas_que_el_validador_permite() -> None:
+    """MIRA-ETL documenta vistas que el validador no permite (query.v_coverage
+    son metadatos de las corridas del ETL). Describirselas al modelo garantiza
+    que genere SQL contra ellas, que el validador lo rechace, y que se gasten
+    los 3 intentos para terminar en REJECTED_SQL_RELATION."""
+    executor = _FakeExecutor([])
+
+    await load_semantic_dictionary(executor)  # type: ignore[arg-type]
+
+    assert executor.last_params is not None
+    pedidas = executor.last_params["allowed"]
+    assert set(pedidas) == set(ALLOWED_RELATIONS)
+    assert "query.v_coverage" not in pedidas
