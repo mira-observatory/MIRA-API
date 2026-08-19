@@ -19,6 +19,7 @@ from mira_api.nlq.sql_generation import (
     GenerationFailed,
     GenerationResult,
     OutOfScope,
+    PriorTurn,
     Usage,
     generate_validated_sql,
 )
@@ -216,6 +217,14 @@ async def run_query(
             question=question,
             countries=countries,
             max_rows=max_rows,
+            history=[
+                PriorTurn(
+                    question=turn.question,
+                    countries=[c.upper() for c in turn.countries],
+                    sql=turn.sql,
+                )
+                for turn in request.history
+            ],
         )
     except OutOfScope as out_of_scope:
         timings_ms["llm_ms"] = int((time.monotonic() - llm_start) * 1000)

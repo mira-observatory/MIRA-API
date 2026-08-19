@@ -109,9 +109,32 @@ class QueryResponse(BaseModel):
     timings_ms: dict[str, int] = {}
 
 
+class ConversationTurn(BaseModel):
+    """Una pregunta anterior y el SQL que la respondio.
+
+    Se manda el SQL, no las filas: es lo que deja resolver un seguimiento como
+    "¿y en Honduras?" cambiandole el pais a la consulta anterior, y ocupa poco
+    en el prompt.
+
+    Lo escribe el cliente, asi que no es confiable -- pero tampoco necesita
+    serlo: nada de aqui se ejecuta. Solo entra al prompt, y todo lo que el
+    modelo produzca despues pasa igual por el validador (lista blanca de
+    vistas, filtro de pais, LIMIT). Lo peor que logra un historial falseado es
+    que el modelo genere SQL que el validador rechaza.
+    """
+
+    question: str = Field(max_length=400)
+    countries: list[str] = Field(min_length=1)
+    sql: str = Field(max_length=4000)
+
+
 class QueryRequest(BaseModel):
     question: str = Field(max_length=400)
     countries: list[str] = Field(min_length=1)
+    #: Turnos anteriores de la conversacion, del mas viejo al mas reciente.
+    #: Acotado a proposito: cada turno son tokens de entrada en cada llamada,
+    #: y mas de tres rara vez ayuda a resolver un seguimiento.
+    history: list[ConversationTurn] = Field(default=[], max_length=3)
     date_from: str | None = None
     date_to: str | None = None
     process_status: str | None = None

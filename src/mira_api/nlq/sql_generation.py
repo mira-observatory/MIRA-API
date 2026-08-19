@@ -41,6 +41,12 @@ distinta moneda sin agrupar antes por currency_code.
 (y query.v_award_suppliers si se pregunta por un proveedor especifico).
 7. Si la pregunta no se puede responder con las columnas disponibles, \
 responde exactamente con este texto y nada mas: OUT_OF_SCOPE
+8. Esto es una conversacion. Los turnos anteriores traen la pregunta y el SQL \
+que generaste para ella. Si la pregunta actual se apoya en una anterior \
+("¿y en Honduras?", "¿y el año pasado?", "ordenalos por monto"), resuelvela \
+contra ese historial: parte del SQL anterior y cambia unicamente lo que la \
+pregunta pide. Los paises que valen son los de "Paises:" del turno actual, \
+no los del anterior.
 
 Columnas disponibles:
 {dictionary}
@@ -72,6 +78,16 @@ class GenerationFailed(Exception):
         self.detail = last_rejection.detail
         self.usage = usage
         self.attempts = attempts
+
+
+@dataclass(frozen=True)
+class PriorTurn:
+    """Un turno anterior ya resuelto. Espejo de api.schemas.ConversationTurn,
+    repetido aqui para que este modulo no dependa de la capa HTTP."""
+
+    question: str
+    countries: list[str]
+    sql: str
 
 
 @dataclass(frozen=True)
@@ -127,6 +143,29 @@ def build_system_blocks(columns: list[ColumnDoc]) -> list[dict[str, object]]:
     ]
 
 
+def _user_turn(question: str, countries: list[str]) -> str:
+    return f"Paises: {', '.join(countries)}\nPregunta: {question}"
+
+
+def _build_messages(
+    question: str, countries: list[str], history: list[PriorTurn]
+) -> list[dict[str, object]]:
+    """Replica la conversacion como pares pregunta -> SQL. Cada turno anterior
+    lleva SUS paises, no los de ahora: reescribirlos dejaria un mensaje que
+    dice "Paises: HN" junto a un SQL que filtra 'CR', y esa contradiccion es
+    justo lo que confunde al modelo en el turno que importa.
+
+    Va todo en `messages`, despues del ultimo cache_control (que vive en el
+    bloque `system`), asi que el historial no invalida el cache del prompt.
+    """
+    messages: list[dict[str, object]] = []
+    for prior in history:
+        messages.append({"role": "user", "content": _user_turn(prior.question, prior.countries)})
+        messages.append({"role": "assistant", "content": prior.sql})
+    messages.append({"role": "user", "content": _user_turn(question, countries)})
+    return messages
+
+
 def _strip_markdown_fence(text: str) -> str:
     stripped = text.strip()
     if stripped.startswith("```"):
@@ -146,6 +185,7 @@ async def generate_validated_sql(
     question: str,
     countries: list[str],
     max_rows: int,
+    history: list[PriorTurn] | None = None,
     max_tokens: int = 4096,
 ) -> GenerationResult:
     """Genera SQL, lo valida, y si el validador lo rechaza reintenta hasta
@@ -157,12 +197,7 @@ async def generate_validated_sql(
     valida (el ultimo rechazo, con su regla exacta). Ambas excepciones cargan
     el uso acumulado de tokens -- un intento fallido tambien cuesta.
     """
-    messages: list[dict[str, object]] = [
-        {
-            "role": "user",
-            "content": f"Paises: {', '.join(countries)}\nPregunta: {question}",
-        }
-    ]
+    messages = _build_messages(question, countries, history or [])
     attempts: list[GenerationAttempt] = []
     usage = Usage()
 

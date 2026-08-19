@@ -10,6 +10,7 @@ from mira_api.nlq.sql_generation import (
     MAX_ATTEMPTS,
     GenerationFailed,
     OutOfScope,
+    PriorTurn,
     _strip_markdown_fence,
     build_system_blocks,
     generate_validated_sql,
@@ -153,6 +154,112 @@ async def test_out_of_scope_no_reintenta() -> None:
     assert len(client.calls) == 1
     assert len(err.value.attempts) == 1
     assert err.value.attempts[0].outcome is Outcome.OUT_OF_SCOPE
+
+
+# --- Memoria conversacional ---------------------------------------------------
+
+
+HISTORIAL = [
+    PriorTurn(
+        question="cuantos procesos hay en Costa Rica",
+        countries=["CR"],
+        sql="SELECT COUNT(*) FROM query.v_process WHERE country_code = 'CR'",
+    )
+]
+
+
+@pytest.mark.asyncio
+async def test_el_historial_viaja_como_pares_pregunta_sql() -> None:
+    client = _ScriptedClient(
+        ["select count(*) from query.v_process where country_code = 'HN'"]
+    )
+
+    await generate_validated_sql(
+        client,  # type: ignore[arg-type]
+        model="claude-sonnet-5",
+        system=[],
+        question="y en Honduras?",
+        countries=["HN"],
+        max_rows=MAX_ROWS,
+        history=HISTORIAL,
+    )
+
+    mensajes = client.calls[0]
+    # user(anterior) -> assistant(SQL anterior) -> user(actual)
+    assert [m["role"] for m in mensajes] == ["user", "assistant", "user"]
+    assert "cuantos procesos hay en Costa Rica" in str(mensajes[0]["content"])
+    assert mensajes[1]["content"] == HISTORIAL[0].sql
+    assert "y en Honduras?" in str(mensajes[2]["content"])
+
+
+@pytest.mark.asyncio
+async def test_cada_turno_conserva_sus_propios_paises() -> None:
+    """Reescribir los paises del turno anterior con los de ahora dejaria un
+    mensaje que dice "Paises: HN" pegado a un SQL que filtra 'CR' -- una
+    contradiccion justo en el ejemplo del que el modelo tiene que aprender."""
+    client = _ScriptedClient(
+        ["select count(*) from query.v_process where country_code = 'HN'"]
+    )
+
+    await generate_validated_sql(
+        client,  # type: ignore[arg-type]
+        model="claude-sonnet-5",
+        system=[],
+        question="y en Honduras?",
+        countries=["HN"],
+        max_rows=MAX_ROWS,
+        history=HISTORIAL,
+    )
+
+    mensajes = client.calls[0]
+    assert "Paises: CR" in str(mensajes[0]["content"])
+    assert "Paises: HN" in str(mensajes[2]["content"])
+
+
+@pytest.mark.asyncio
+async def test_sin_historial_solo_va_la_pregunta_actual() -> None:
+    client = _ScriptedClient(
+        ["select process_id from query.v_process where country_code = 'CR'"]
+    )
+
+    await generate_validated_sql(
+        client,  # type: ignore[arg-type]
+        model="claude-sonnet-5",
+        system=[],
+        question="dame procesos",
+        countries=["CR"],
+        max_rows=MAX_ROWS,
+    )
+
+    assert [m["role"] for m in client.calls[0]] == ["user"]
+
+
+@pytest.mark.asyncio
+async def test_el_historial_sobrevive_a_un_reintento_del_validador() -> None:
+    """El reintento agrega mensajes al final; el historial anterior tiene que
+    seguir estando, o la correccion se hace sin el contexto que la origino."""
+    client = _ScriptedClient(
+        [
+            "select * from mart.processes",  # rechazado
+            "select count(*) from query.v_process where country_code = 'HN'",
+        ]
+    )
+
+    await generate_validated_sql(
+        client,  # type: ignore[arg-type]
+        model="claude-sonnet-5",
+        system=[],
+        question="y en Honduras?",
+        countries=["HN"],
+        max_rows=MAX_ROWS,
+        history=HISTORIAL,
+    )
+
+    segunda_llamada = client.calls[1]
+    assert "cuantos procesos hay en Costa Rica" in str(segunda_llamada[0]["content"])
+    assert segunda_llamada[1]["content"] == HISTORIAL[0].sql
+    # y el ultimo mensaje es la retroalimentacion del validador
+    assert "rechazado" in str(segunda_llamada[-1]["content"])
 
 
 @pytest.mark.asyncio
