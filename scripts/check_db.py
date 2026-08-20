@@ -11,6 +11,7 @@ SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
 from mira_api.config import get_settings  # noqa: E402
+from mira_api.db.coverage import COVERAGE_SQL  # noqa: E402
 
 
 CHECKS = {
@@ -24,7 +25,7 @@ CHECKS = {
     ),
     "DATABASE_URL_WEB": (
         "database_url_web",
-        "select count(*) from web.coverage_sources",
+        f"select count(*) from ({COVERAGE_SQL}) coverage_check",
     ),
 }
 
