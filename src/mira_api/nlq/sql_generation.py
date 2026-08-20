@@ -4,6 +4,11 @@ from dataclasses import dataclass
 
 from mira_api.audit.outcomes import Outcome
 from mira_api.llm.client import ClaudeClient
+from mira_api.nlq.prompts import (
+    SQL_SYSTEM_PROMPT,
+    SQL_USER_PROMPT,
+    SQL_VALIDATION_RETRY_PROMPT,
+)
 from mira_api.nlq.semantic_dictionary import ColumnDoc, format_for_prompt
 from mira_api.nlq.validator import SqlRejected, ValidatedSql, validate
 
@@ -15,43 +20,6 @@ MAX_ATTEMPTS = 3
 #: Sentinela que el modelo devuelve cuando la pregunta no se puede responder
 #: con las columnas disponibles. No pasa por el validador -- se detecta antes.
 OUT_OF_SCOPE_SENTINEL = "OUT_OF_SCOPE"
-
-_SYSTEM_INSTRUCTIONS = """\
-Eres el traductor de preguntas en espanol a SQL de PostgreSQL de solo lectura \
-para MIRA, un observatorio de contrataciones publicas de Centroamerica \
-(Costa Rica, Guatemala, Honduras, Nicaragua).
-
-Reglas estrictas, sin excepcion:
-1. Responde UNICAMENTE con la sentencia SQL -- sin explicaciones, sin \
-markdown, sin comentarios, sin punto y coma final.
-2. Solo SELECT. Nunca escribas INSERT/UPDATE/DELETE/DROP/ALTER ni ninguna \
-otra sentencia.
-3. Solo puedes usar las vistas listadas abajo, siempre con el prefijo \
-"query." exacto (por ejemplo query.v_process). Nunca inventes una columna o \
-vista que no este en la lista.
-4. Si la consulta usa query.v_process, query.v_buyers o query.v_suppliers, \
-SIEMPRE debes filtrar por country_code, con un valor literal ('CR') o una \
-lista literal (IN ('CR', 'GT')) -- nunca con una subconsulta. Usa unicamente \
-los paises indicados en "Paises:" abajo, ni mas ni menos. Esto se revisa \
-automaticamente y se rechaza si falta o si incluye un pais no pedido.
-5. Nunca sumes columnas de dinero (estimated_amount, awarded_amount) de \
-distinta moneda sin agrupar antes por currency_code.
-6. El monto adjudicado vive en query.v_awards, no en query.v_process. Para \
-"cuanto se gasto" siempre hace falta unir query.v_process con query.v_awards \
-(y query.v_award_suppliers si se pregunta por un proveedor especifico).
-7. Si la pregunta no se puede responder con las columnas disponibles, \
-responde exactamente con este texto y nada mas: OUT_OF_SCOPE
-8. Esto es una conversacion. Los turnos anteriores traen la pregunta y el SQL \
-que generaste para ella. Si la pregunta actual se apoya en una anterior \
-("¿y en Honduras?", "¿y el año pasado?", "ordenalos por monto"), resuelvela \
-contra ese historial: parte del SQL anterior y cambia unicamente lo que la \
-pregunta pide. Los paises que valen son los de "Paises:" del turno actual, \
-no los del anterior.
-
-Columnas disponibles:
-{dictionary}
-"""
-
 
 class OutOfScope(Exception):
     """El modelo determino que la pregunta no es respondible con el esquema
@@ -133,7 +101,7 @@ def build_system_blocks(columns: list[ColumnDoc]) -> list[dict[str, object]]:
     se marca para cacheo. La pregunta y los paises van en `messages`, siempre
     despues del ultimo cache_control, para no invalidar el cache en cada
     llamada distinta."""
-    text = _SYSTEM_INSTRUCTIONS.format(dictionary=format_for_prompt(columns))
+    text = SQL_SYSTEM_PROMPT.format(dictionary=format_for_prompt(columns))
     return [
         {
             "type": "text",
@@ -144,7 +112,7 @@ def build_system_blocks(columns: list[ColumnDoc]) -> list[dict[str, object]]:
 
 
 def _user_turn(question: str, countries: list[str]) -> str:
-    return f"Paises: {', '.join(countries)}\nPregunta: {question}"
+    return SQL_USER_PROMPT.format(countries=", ".join(countries), question=question)
 
 
 def _build_messages(
@@ -241,10 +209,8 @@ async def generate_validated_sql(
             messages.append(
                 {
                     "role": "user",
-                    "content": (
-                        f"Ese SQL fue rechazado por el validador: {err.rule} "
-                        f"{err.detail}. Corrigelo y responde unicamente con el "
-                        "SQL corregido, siguiendo las mismas reglas."
+                    "content": SQL_VALIDATION_RETRY_PROMPT.format(
+                        rule=err.rule, detail=err.detail
                     ),
                 }
             )

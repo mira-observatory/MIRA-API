@@ -6,6 +6,7 @@ from typing import Any
 
 from mira_api.llm.client import ClaudeClient, ClaudeRefusal
 from mira_api.nlq.number_extraction import find_unverified_numbers
+from mira_api.nlq.prompts import NARRATIVE_RETRY_PROMPT, NARRATIVE_SYSTEM_PROMPT
 from mira_api.nlq.sql_generation import Usage
 
 #: Intento inicial + 1 reintento (Parte 1.7): si el segundo tambien alucina un
@@ -15,26 +16,6 @@ MAX_NARRATIVE_ATTEMPTS = 2
 #: Cuantas filas del resultado se le mandan al modelo -- el resto de la tabla
 #: ya se le entrego al usuario en `rows`, la redaccion no necesita verlo todo.
 _MAX_ROWS_IN_PROMPT = 25
-
-_SYSTEM_PROMPT = """\
-Redactas un resumen breve en espanol (2 a 4 frases) del resultado de una \
-consulta sobre contrataciones publicas de Centroamerica, para un ciudadano \
-que no sabe SQL.
-
-Reglas estrictas:
-1. No calcules. No estimes. No sumes. No promedies. Usa UNICAMENTE los \
-numeros que ya estan en la tabla, tal como estan.
-2. Si la pregunta pide un total que no aparece como una celda de la tabla, \
-di explicitamente que ese dato no esta disponible -- nunca lo inventes ni lo \
-calcules a mano.
-3. Si la tabla esta truncada (no muestra todas las filas), acláralo en vez \
-de hablar como si fuera el total completo.
-4. Nunca mezcles montos de monedas distintas como si fueran un solo total.
-5. Responde solo con el resumen, sin titulos ni markdown.
-6. Empieza de forma conversacional, como si le hablaras directamente a la \
-persona (por ejemplo "Claro, aqui tienes..." o "Con gusto, encontre..."). \
-Nunca empieces la respuesta con un numero o una lista en seco."""
-
 
 @dataclass(frozen=True)
 class NarrativeResult:
@@ -96,7 +77,7 @@ async def generate_narrative(
         try:
             completion = await client.complete_text(
                 model=model,
-                system=[{"type": "text", "text": _SYSTEM_PROMPT}],
+                system=[{"type": "text", "text": NARRATIVE_SYSTEM_PROMPT}],
                 messages=messages,
                 max_tokens=max_tokens,
             )
@@ -130,10 +111,8 @@ async def generate_narrative(
         messages.append(
             {
                 "role": "user",
-                "content": (
-                    f"Estos numeros que escribiste no aparecen en la tabla: "
-                    f"{', '.join(invalid)}. Reescribe el resumen usando solo "
-                    "numeros que esten literalmente en los datos."
+                "content": NARRATIVE_RETRY_PROMPT.format(
+                    invalid_numbers=", ".join(invalid)
                 ),
             }
         )
