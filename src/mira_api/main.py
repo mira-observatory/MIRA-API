@@ -12,11 +12,12 @@ from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from mira_api.api.routes import router
 from mira_api.api.schemas import EntityCandidate, QueryRequest, QueryResponse
 from mira_api.config import get_settings
 from mira_api.db.executor import ReadOnlyExecutor
 from mira_api.db.log_executor import LogExecutor
-from mira_api.db.pool import build_log_pool, build_read_pool
+from mira_api.db.pool import build_log_pool, build_read_pool, build_web_pool
 from mira_api.llm.client import ClaudeClient
 from mira_api.nlq.entities import resolve_entities
 from mira_api.nlq.pipeline import run_query
