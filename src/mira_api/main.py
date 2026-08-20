@@ -89,7 +89,7 @@ async def healthz() -> dict[str, str]:
     return {"status": "ok", "version": get_settings().app_version}
 
 
-@app.get("/v1/entities/resolve")
+@app.get("/entities/resolve")
 async def entities_resolve(
     q: str = Query(min_length=1, max_length=200),
     type: Literal["supplier", "buyer"] = Query(...),
@@ -140,7 +140,7 @@ def _resolve_subject_key_for_logging(
     return subject_key
 
 
-@app.post("/v1/query")
+@app.post("/query")
 async def query(
     request: QueryRequest, http_request: Request, http_response: Response
 ) -> QueryResponse:
@@ -177,11 +177,11 @@ def _format_sse(event: str, data: dict[str, object]) -> bytes:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n".encode()
 
 
-@app.post("/v1/query/stream")
+@app.post("/query/stream")
 async def query_stream(
     request: QueryRequest, http_request: Request
 ) -> StreamingResponse:
-    """Misma traduccion, ejecucion y redaccion que POST /v1/query, pero
+    """Misma traduccion, ejecucion y redaccion que POST /query, pero
     transmitida por SSE segun cada fase queda lista: sql -> row_count -> rows
     -> narrative -> done (o error -> done si el pipeline corta antes).
 
@@ -240,7 +240,7 @@ async def _stream_query_events(
                 on_event=on_event,
             )
         except Exception:
-            logger.exception("fallo inesperado transmitiendo /v1/query/stream")
+            logger.exception("fallo inesperado transmitiendo /query/stream")
             on_event("error", {"outcome": "FAILED_LLM_ERROR", "detail": "internal_error"})
             on_event("done", {"outcome": "FAILED_LLM_ERROR", "query_id": None})
         finally:
@@ -259,4 +259,4 @@ async def _stream_query_events(
 
 
 # Los endpoints restantes se incorporan en fases siguientes:
-#   GET /v1/coverage, GET /v1/quota, POST /v1/feedback
+#   GET /coverage, GET /quota, POST /feedback

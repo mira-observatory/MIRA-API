@@ -69,7 +69,7 @@ def _columns_from_rows(names: list[str], rows: list[dict[str, object]]) -> list[
 
 
 #: Se llama en cada transicion de fase del pipeline (sql -> row_count -> rows
-#: -> narrative -> done/error). GET /v1/query no lo usa; POST /v1/query/stream
+#: -> narrative -> done/error). GET /query no lo usa; POST /query/stream
 #: (Hito 7) lo conecta a una cola SSE. Nunca es async: solo encola, nunca
 #: bloquea al pipeline por un consumidor lento.
 StreamCallback = Callable[[str, dict[str, object]], None]
@@ -161,8 +161,8 @@ async def run_query(
     en False, pero las filas ya estan en la respuesta de todas formas.
 
     `on_event` (Hito 7) reporta las mismas fases segun van quedando listas --
-    GET /v1/query lo deja en None (solo le interesa el QueryResponse final),
-    POST /v1/query/stream lo usa para transmitir por SSE sin duplicar esta
+    GET /query lo deja en None (solo le interesa el QueryResponse final),
+    POST /query/stream lo usa para transmitir por SSE sin duplicar esta
     logica en dos sitios.
     """
     query_id = uuid4()
