@@ -218,9 +218,15 @@ async def _amounts_are_plausible(executor: ReadOnlyExecutor) -> CheckResult:
     return CheckResult("montos USD/EUR plausibles", True, "ninguna sobre mil millones")
 
 
-async def _country_coverage(executor: ReadOnlyExecutor) -> CheckResult:
-    """Informativo: que paises tienen datos de verdad. No falla, pero es lo
-    primero que hay que mirar despues de una recarga."""
+async def _has_any_data(executor: ReadOnlyExecutor) -> CheckResult:
+    """Que haya datos, y de que paises.
+
+    Falla si no hay ninguno. Una base vacia pasa todas las demas
+    comprobaciones -- los permisos estan, las vistas existen, el diccionario
+    esta poblado -- y el servicio igual no puede responder nada. Decir "la base
+    cumple el contrato" sobre una base vacia es justo el reporte tranquilizador
+    que deja pasar una recarga a medias.
+    """
     try:
         rows = await executor.run(
             "select country_code, count(*) as n from query.v_process"
@@ -228,12 +234,16 @@ async def _country_coverage(executor: ReadOnlyExecutor) -> CheckResult:
             max_rows=50,
         )
     except DatabaseError as err:
-        return CheckResult("paises con datos", False, f"{type(err).__name__}: {err}", advisory=True)
+        return CheckResult("hay datos cargados", False, f"{type(err).__name__}: {err}")
 
     if not rows.rows:
-        return CheckResult("paises con datos", False, "query.v_process esta vacia", advisory=True)
+        return CheckResult(
+            "hay datos cargados",
+            False,
+            "query.v_process esta vacia: el ETL no ha cargado nada todavia",
+        )
     resumen = ", ".join(f"{row['country_code']}={row['n']}" for row in rows.rows)
-    return CheckResult("paises con datos", True, resumen, advisory=True)
+    return CheckResult("hay datos cargados", True, resumen)
 
 
 async def run_contract_checks(settings: Settings) -> list[CheckResult]:
@@ -252,7 +262,7 @@ async def run_contract_checks(settings: Settings) -> list[CheckResult]:
             await _audit_is_writable(log_executor),
             await _outcome_check_accepts_taxonomy(executor),
             await _amounts_are_plausible(executor),
-            await _country_coverage(executor),
+            await _has_any_data(executor),
         ]
     finally:
         await read_pool.close()
