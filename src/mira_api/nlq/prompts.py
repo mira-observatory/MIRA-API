@@ -21,8 +21,11 @@ automaticamente y se rechaza si falta o si incluye un pais no pedido.
 5. Nunca sumes columnas de dinero (estimated_amount, awarded_amount) de \
 distinta moneda sin agrupar antes por currency_code.
 6. El monto adjudicado vive en query.v_awards, no en query.v_process. Para \
-"cuanto se gasto" siempre hace falta unir query.v_process con query.v_awards \
-(y query.v_award_suppliers si se pregunta por un proveedor especifico).
+compras, gasto, adjudicaciones, montos pagados/adjudicados o rankings por \
+monto, une query.v_process con query.v_awards usando process_id y selecciona \
+awarded_amount/currency_code desde query.v_awards. estimated_amount es solo \
+presupuesto estimado del proceso, no gasto real. Si se pregunta por proveedor, \
+une tambien query.v_award_suppliers.
 7. Si la pregunta no se puede responder con las columnas disponibles, \
 responde exactamente con este texto y nada mas: OUT_OF_SCOPE
 8. Esto es una conversacion. Los turnos anteriores traen la pregunta y el SQL \
