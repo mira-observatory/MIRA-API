@@ -46,22 +46,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ese descuido deja /coverage colgado hasta el timeout del pool en vez de
     # decir que esta mal configurado.
     app.state.web_pool = build_web_pool(settings) if settings.database_url_web else None
-    await app.state.read_pool.open()
-    await app.state.log_pool.open()
-    if app.state.web_pool is not None:
-        await app.state.web_pool.open()
-    app.state.executor = ReadOnlyExecutor(app.state.read_pool)
-    app.state.log_executor = LogExecutor(app.state.log_pool)
-
-    app.state.claude_client = ClaudeClient(api_key=settings.anthropic_api_key)
-    # El diccionario semantico se carga una sola vez al arrancar (T3.3): es el
-    # contenido estable del prompt de generacion de SQL, y va marcado para
-    # cacheo. Un cambio en MIRA-ETL se refleja al reiniciar el servicio, no
-    # en caliente -- coherente con que ese diccionario cambia rara vez.
-    columns = await load_semantic_dictionary(app.state.executor)
-    app.state.sql_system_blocks = build_system_blocks(columns)
-
     try:
+        await app.state.read_pool.open()
+        await app.state.log_pool.open()
+        if app.state.web_pool is not None:
+            await app.state.web_pool.open()
+        app.state.executor = ReadOnlyExecutor(app.state.read_pool)
+        app.state.log_executor = LogExecutor(app.state.log_pool)
+
+        app.state.claude_client = ClaudeClient(api_key=settings.anthropic_api_key)
+        # El diccionario semantico se carga una sola vez al arrancar (T3.3): es el
+        # contenido estable del prompt de generacion de SQL, y va marcado para
+        # cacheo. Un cambio en MIRA-ETL se refleja al reiniciar el servicio, no
+        # en caliente -- coherente con que ese diccionario cambia rara vez.
+        columns = await load_semantic_dictionary(app.state.executor)
+        app.state.sql_system_blocks = build_system_blocks(columns)
+
         yield
     finally:
         await app.state.read_pool.close()
