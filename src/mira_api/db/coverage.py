@@ -14,7 +14,6 @@ from mira_api.api.schemas import (
     CoverageSummary,
 )
 
-
 # This statement is deliberately constant. Public coverage never goes through
 # the generated-SQL validator or any language-model component.
 COVERAGE_SQL = """

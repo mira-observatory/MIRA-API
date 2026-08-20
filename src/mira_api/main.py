@@ -12,11 +12,12 @@ from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from mira_api.api.routes import router
 from mira_api.api.schemas import EntityCandidate, QueryRequest, QueryResponse
 from mira_api.config import get_settings
 from mira_api.db.executor import ReadOnlyExecutor
 from mira_api.db.log_executor import LogExecutor
-from mira_api.db.pool import build_log_pool, build_read_pool
+from mira_api.db.pool import build_log_pool, build_read_pool, build_web_pool
 from mira_api.llm.client import ClaudeClient
 from mira_api.nlq.entities import resolve_entities
 from mira_api.nlq.pipeline import run_query
@@ -40,9 +41,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
     app.state.read_pool = build_read_pool(settings)
     app.state.log_pool = build_log_pool(settings)
-    app.state.web_pool = build_web_pool(settings)
+    # El pool publico solo existe si hay rol para el. Ver Settings.database_url_web.
+    app.state.web_pool = build_web_pool(settings) if settings.database_url_web else None
     await app.state.read_pool.open()
     await app.state.log_pool.open()
+    if app.state.web_pool is not None:
+        await app.state.web_pool.open()
     app.state.executor = ReadOnlyExecutor(app.state.read_pool)
     app.state.log_executor = LogExecutor(app.state.log_pool)
 
@@ -59,7 +63,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         await app.state.read_pool.close()
         await app.state.log_pool.close()
-        await app.state.web_pool.close()
+        if app.state.web_pool is not None:
+            await app.state.web_pool.close()
 
 
 app = FastAPI(

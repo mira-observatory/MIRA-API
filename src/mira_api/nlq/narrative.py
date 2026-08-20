@@ -9,6 +9,7 @@ from mira_api.nlq.number_extraction import find_unverified_numbers
 from mira_api.nlq.prompts import NARRATIVE_RETRY_PROMPT, NARRATIVE_SYSTEM_PROMPT
 from mira_api.nlq.sql_generation import Usage
 
+
 @dataclass(frozen=True)
 class NarrativeResult:
     text: str | None
