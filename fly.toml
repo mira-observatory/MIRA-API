@@ -1,0 +1,48 @@
+# Despliegue del servicio en Fly.io. El Dockerfile ya define como se construye;
+# esto define como corre.
+#
+# Ninguna credencial vive aqui: este archivo se commitea. Los secretos se
+# cargan con `fly secrets set`, que los guarda cifrados y los inyecta como
+# variables de entorno. Ver la seccion de despliegue del README.
+
+app = "mira-api"
+primary_region = "mia"          # Miami: es la region mas cercana a Centroamerica
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # Solo valores no sensibles. Deben coincidir con el EXPOSE del Dockerfile.
+  PORT = "8080"
+  # El front y la API quedan en dominios distintos, asi que la peticion es
+  # cross-site: con "lax" el navegador no reenvia la cookie anonima y la
+  # atribucion del registro de auditoria se pierde en silencio.
+  COOKIE_SAMESITE = "none"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+
+  # Se apaga sin trafico y arranca sola con la primera peticion. Para un
+  # observatorio con uso a rafagas esto es lo correcto: se paga por uso y el
+  # arranque en frio (unos segundos) es aceptable. Si molesta en una demo,
+  # subir min_machines_running a 1.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# Una sola instancia a proposito, por ahora. El servicio es I/O-bound y el
+# cuello de botella es Supabase, no la CPU. Ademas los pools de conexiones se
+# multiplican por instancia: escalar sin revisar los limites del pooler de
+# Supabase cambia un problema de latencia por uno de conexiones agotadas.

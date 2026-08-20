@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -53,6 +54,13 @@ class Settings(BaseSettings):
         description="Secreto HMAC para el token de cuota y el hash de IP"
     )
     turnstile_secret: str = ""
+    #: SameSite de la cookie anonima. En desarrollo el front y la API comparten
+    #: origen (localhost) y "lax" es lo correcto. Desplegados en dominios
+    #: distintos la peticion es cross-site, y el navegador NO reenvia una
+    #: cookie "lax": haria falta "none" (que exige Secure, ya activo). Sin
+    #: esto, en produccion cada peticion pareceria de una sesion nueva y la
+    #: atribucion del registro de auditoria se perderia en silencio.
+    cookie_samesite: Literal["lax", "none", "strict"] = "lax"
 
     # --- limites -----------------------------------------------------------
     max_question_chars: int = 400

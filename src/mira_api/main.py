@@ -133,7 +133,9 @@ def _set_subject_cookie(http_response: Response, *, value: str) -> None:
         value=value,
         httponly=True,
         secure=True,
-        samesite="lax",
+        # Ver Settings.cookie_samesite: desplegados en dominios distintos, el
+        # navegador no reenvia una cookie "lax" y la atribucion se pierde.
+        samesite=get_settings().cookie_samesite,
         max_age=400 * 24 * 3600,
     )
 

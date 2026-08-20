@@ -164,6 +164,60 @@ la narrativa no cite un numero ausente del resultado, que lo que esta fuera de
 dominio no genere SQL-- y varias vigilan regresiones de bugs concretos, anotadas
 en `src/mira_api/evals/cases.py`.
 
+## Despliegue
+
+El `Dockerfile` define como se construye y `fly.toml` como corre. **Ninguna
+credencial vive en el repositorio**: los secretos se cargan aparte y Fly los
+inyecta como variables de entorno.
+
+```bash
+fly launch --no-deploy          # solo la primera vez; reusa el fly.toml
+fly secrets set \
+  DATABASE_URL_QUERY="postgresql://mira_query...:...@...?sslmode=require" \
+  DATABASE_URL_WEB="postgresql://mira_web...:...@...?sslmode=require" \
+  DATABASE_URL_LOG="postgresql://mira_logger...:...@...?sslmode=require" \
+  ANTHROPIC_API_KEY="sk-ant-..." \
+  TOKEN_HMAC_SECRET="$(openssl rand -hex 32)" \
+  CORS_ORIGINS="https://<dominio-del-front>"
+fly deploy
+```
+
+Despues de desplegar, la misma verificacion de siempre, apuntando al servicio
+remoto en vez de a localhost:
+
+```bash
+curl https://<app>.fly.dev/healthz
+curl https://<app>.fly.dev/coverage
+```
+
+### Tres cosas que rompen el despliegue si se pasan por alto
+
+**`CORS_ORIGINS` debe tener el dominio real del front.** Su valor por defecto
+es `http://localhost:5173`. Sin cambiarlo, el navegador bloquea cada peticion
+y el chat no responde nada.
+
+**`VITE_API_BASE_URL` se congela al construir, no al servir.** Vite lo incrusta
+en el paquete, asi que hay que fijarlo *antes* de `npm run build`; cambiarlo
+despues en el host no tiene ningun efecto:
+
+```bash
+VITE_API_BASE_URL=https://<app>.fly.dev npm run build
+```
+
+**`COOKIE_SAMESITE=none` cuando el front y la API estan en dominios distintos.**
+Ya viene puesto en `fly.toml`. Con el valor de desarrollo (`lax`) el navegador
+no reenvia la cookie anonima en una peticion cross-site, y la atribucion del
+registro de auditoria se pierde sin dar ningun error.
+
+### Antes de abrirlo al publico
+
+La cuota **por persona** esta escrita pero desactivada
+(`ENABLE_SUBJECT_QUOTA=false`, decision de producto del 2026-08-18). El
+cortacircuitos global de presupuesto si protege el gasto, pero no reparte: una
+sola persona puede agotar el presupuesto del dia y dejar el servicio mudo para
+todas las demas hasta el dia siguiente. Mientras el acceso sea conocido no
+importa; en una direccion publica, conviene activarla.
+
 ## Estructura
 
 | Ruta | Responsabilidad |
