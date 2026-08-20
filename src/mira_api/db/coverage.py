@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import date, datetime
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar, cast
 
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
@@ -17,26 +17,61 @@ from mira_api.api.schemas import (
 # This statement is deliberately constant. Public coverage never goes through
 # the generated-SQL validator or any language-model component.
 COVERAGE_SQL = """
+    with country_catalog as (
+        select
+            country_code,
+            display_name as country_name,
+            flag_asset,
+            status as country_status,
+            sort_order
+        from web.countries
+        where status in ('ACTIVE', 'PLANNED')
+
+        union all
+
+        select
+            source_countries.country_code,
+            source_countries.country_code as country_name,
+            '/flags/' || lower(source_countries.country_code) || '.svg' as flag_asset,
+            'PLANNED' as country_status,
+            source_countries.sort_order
+        from (
+            select country_code, min(sort_order) as sort_order
+            from web.coverage_sources
+            where status in ('ACTIVE', 'PLANNED')
+            group by country_code
+        ) source_countries
+        where not exists (
+            select 1
+            from web.countries countries
+            where countries.country_code = source_countries.country_code
+        )
+    )
     select
-        source_key,
-        country_code,
-        source_system,
-        display_name,
-        status,
-        process_count,
-        buyer_count,
-        supplier_count,
-        publication_date_min,
-        publication_date_max,
-        complete_process_count,
-        partial_process_count,
-        process_without_date_count,
-        last_successful_load_at,
-        refreshed_at,
-        sort_order
-    from web.coverage_sources
-    where status in ('ACTIVE', 'PLANNED')
-    order by sort_order, country_code, source_key
+        country_catalog.country_code,
+        country_catalog.country_name,
+        country_catalog.flag_asset,
+        country_catalog.country_status,
+        source.source_key,
+        source.source_system,
+        source.display_name,
+        source.status,
+        coalesce(source.process_count, 0) as process_count,
+        coalesce(source.buyer_count, 0) as buyer_count,
+        coalesce(source.supplier_count, 0) as supplier_count,
+        source.publication_date_min,
+        source.publication_date_max,
+        coalesce(source.complete_process_count, 0) as complete_process_count,
+        coalesce(source.partial_process_count, 0) as partial_process_count,
+        coalesce(source.process_without_date_count, 0) as process_without_date_count,
+        source.last_successful_load_at,
+        source.refreshed_at,
+        coalesce(source.sort_order, country_catalog.sort_order) as sort_order
+    from country_catalog
+    left join web.coverage_sources source
+        on source.country_code = country_catalog.country_code
+       and source.status in ('ACTIVE', 'PLANNED')
+    order by country_catalog.sort_order, country_catalog.country_code, source.source_key
 """
 
 DateValue = TypeVar("DateValue", date, datetime)
@@ -59,13 +94,18 @@ def build_coverage_response(rows: list[dict[str, Any]]) -> CoverageResponse:
     countries: list[CoverageCountry] = []
     for country_code, country_rows in grouped.items():
         active = [row for row in country_rows if row["status"] == "ACTIVE"]
-        country_status: Literal["ACTIVE", "PLANNED"] = (
-            "ACTIVE" if active else "PLANNED"
+        country_status = cast(
+            Literal["ACTIVE", "PLANNED", "INACTIVE"],
+            "ACTIVE" if active else country_rows[0]["country_status"],
         )
-        sources = [_source_from_row(row) for row in country_rows]
+        sources = [
+            _source_from_row(row) for row in country_rows if row["source_key"] is not None
+        ]
         countries.append(
             CoverageCountry(
                 country_code=country_code,
+                country_name=str(country_rows[0]["country_name"]),
+                flag_asset=country_rows[0]["flag_asset"],
                 status=country_status,
                 active_sources=len(active),
                 process_count=sum(int(row["process_count"]) for row in active),

@@ -171,6 +171,8 @@ class CoverageSource(BaseModel):
 
 class CoverageCountry(BaseModel):
     country_code: str
+    country_name: str
+    flag_asset: str | None = None
     status: Literal["ACTIVE", "PLANNED", "INACTIVE"]
     active_sources: int
     process_count: int
