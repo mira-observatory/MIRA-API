@@ -104,6 +104,26 @@ Uvicorn:
 HOST=0.0.0.0 PORT=8080 ./scripts/run.sh --log-level debug
 ```
 
+En Windows PowerShell, usa los scripts equivalentes:
+
+```powershell
+.\scripts\install.ps1
+```
+
+Completa las credenciales de `.env` y arranca el servidor con:
+
+```powershell
+.\scripts\run.ps1
+```
+
+Para cambiar el host, el puerto o pasar argumentos adicionales a Uvicorn:
+
+```powershell
+$env:HOST = "0.0.0.0"
+$env:PORT = "8080"
+.\scripts\run.ps1 --log-level debug
+```
+
 Pruebas y calidad:
 
 ```bash
