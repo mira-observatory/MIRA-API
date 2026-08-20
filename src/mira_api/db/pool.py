@@ -46,17 +46,29 @@ def build_read_pool(settings: Settings) -> AsyncConnectionPool:
     )
 
 
-def build_log_pool(settings: Settings) -> AsyncConnectionPool:
-    """Pool minimo para el registro de auditoria, separado del de lectura.
+_LOG_OPTIONS = (
+    "-c statement_timeout=3000 -c idle_in_transaction_session_timeout=10000 "
+    "-c lock_timeout=2000 -c search_path=analytics"
+)
 
-    Va aparte a proposito: si el registro se satura o falla, las consultas de los
-    usuarios no deben verse afectadas.
+
+def build_log_pool(settings: Settings) -> AsyncConnectionPool:
+    """Pool para analytics.*, separado del de lectura -- si el registro se
+    satura o falla, las consultas de los usuarios no deben verse afectadas.
+
+    Ya no es "minimo": desde que existe el presupuesto global (Hito 5), CADA
+    consulta lo toca varias veces (2 lecturas de check_budget + 2 escrituras
+    de record_global_spend), no solo ocasionalmente para auditoria -- un
+    max_size de 2 no aguanta trafico concurrente real (verificado: 100
+    peticiones simultaneas agotaban el pool). Timeout corto (3s): un contador
+    de cuota lento no debe alargar la respuesta al usuario.
     """
     return AsyncConnectionPool(
-        conninfo=settings.database_url_log,
-        min_size=1,
-        max_size=2,
-        timeout=2.0,
+        conninfo=_with_options(settings.database_url_log, _LOG_OPTIONS),
+        min_size=2,
+        max_size=10,
+        timeout=5.0,
+        max_waiting=200,
         max_lifetime=1800,
         open=False,
     )

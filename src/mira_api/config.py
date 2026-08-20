@@ -37,23 +37,35 @@ class Settings(BaseSettings):
     # SQL generado por el modelo, validado antes de ejecutarse. Ver seccion 1.4.
     anthropic_api_key: str = ""
     model_fast: str = "claude-haiku-4-5-20251001"
-    # Configurable por variable de entorno: claude-opus-5 (calidad) o
-    # claude-sonnet-5 (costo, ~30% mas turnos por el mismo presupuesto).
+    # Modelo que genera el SQL. No hay catalogo de consultas en esta version: toda
+    # pregunta se responde con SQL generado, validado por sqlglot antes de ejecutarse.
     sql_model: str = "claude-sonnet-5"
+
+    # --- identificacion del solicitante y proteccion del presupuesto -------
+    # Firma el token anonimo de cuota (cookie HttpOnly) y el HMAC del prefijo de red
+    # que se persiste en vez de la IP. Nunca tiene un valor por defecto: sin el, el
+    # servicio no puede emitir cuotas de forma segura.
+    token_hmac_secret: str = Field(
+        description="Secreto HMAC para el token de cuota y el hash de IP"
+    )
+    turnstile_secret: str = ""
 
     # --- limites -----------------------------------------------------------
     max_question_chars: int = 400
     max_rows: int = 500
-
-    # Cuota por sujeto (token anonimo o prefijo de red): acota el abuso, debe ser
-    # generosa. El cortacircuitos global de abajo es lo unico que garantiza el gasto.
+    sql_max_attempts: int = Field(default=3, gt=0)
+    narrative_max_attempts: int = Field(default=2, gt=0)
+    narrative_max_rows_in_prompt: int = Field(default=25, gt=0)
     quota_per_day: int = 5
     quota_per_month: int = 15
-
-    # Cortacircuitos global de presupuesto. Al 80% del diario, modo solo cache;
-    # al 100% del mensual, solo cache hasta el dia 1.
-    budget_daily_usd: float = 3.50
-    budget_monthly_usd: float = 100.0
+    #: Presupuesto inicial (2026-08-18): $75/mes, repartido parejo en el mes.
+    budget_daily_usd: float = 2.5
+    budget_monthly_usd: float = 75.0
+    #: Cortacircuito global (dia + mes) SIEMPRE esta activo -- protege el gasto.
+    #: La cuota POR SUJETO (T5.1/T5.2) esta escrita pero deliberadamente inactiva:
+    #: decision de producto (2026-08-18) de no limitar por usuario todavia. Se activa
+    #: cambiando esta bandera, sin tocar el resto del codigo.
+    enable_subject_quota: bool = False
 
     # --- versionado, para atribuir regresiones -----------------------------
     prompt_version: str = "0.1.0"

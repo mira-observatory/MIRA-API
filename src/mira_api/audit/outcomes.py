@@ -43,6 +43,9 @@ class Outcome(StrEnum):
     REJECTED_SQL_RELATION = "REJECTED_SQL_RELATION"
     REJECTED_SQL_FUNCTION = "REJECTED_SQL_FUNCTION"
     REJECTED_SQL_COST = "REJECTED_SQL_COST"
+    # Falta el filtro por country_code, o filtra un pais fuera de lo pedido.
+    # Se corrige con el mismo reintento que las demas REJECTED_SQL_*.
+    REJECTED_SQL_COUNTRY_SCOPE = "REJECTED_SQL_COUNTRY_SCOPE"
 
     # --- fallo: se intento y se rompio -------------------------------------
     FAILED_DB_TIMEOUT = "FAILED_DB_TIMEOUT"
@@ -70,9 +73,9 @@ class Outcome(StrEnum):
 
 
 #: Codigos que alimentan `analytics.v_unanswered`, la vista que es literalmente el
-#: backlog del producto. No hay catalogo: el registro de estas preguntas es la
-#: materia prima con la que despues se construira el catalogo de consultas
-#: parametrizadas (seccion 1.4).
+#: backlog del producto. Se revisan cada lunes: los grupos mayores senalan preguntas
+#: recurrentes que el catalogo de consultas parametrizadas de una fase futura debera
+#: cubrir, correcciones del diccionario semantico, o tickets para el ETL.
 UNANSWERED_OUTCOMES: frozenset[Outcome] = frozenset(
     {
         Outcome.OUT_OF_SCOPE,
@@ -88,5 +91,6 @@ MUST_BE_ZERO: frozenset[Outcome] = frozenset(
         Outcome.REJECTED_SQL_NOT_SELECT,
         Outcome.REJECTED_SQL_RELATION,
         Outcome.REJECTED_SQL_FUNCTION,
+        Outcome.REJECTED_SQL_COUNTRY_SCOPE,
     }
 )

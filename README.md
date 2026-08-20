@@ -26,32 +26,45 @@ cumplir por construccion:
 ### Ambiguedad de entidades
 
 Si existen `Karro y Limon S.A` con 6 procesos y `Carro y Limon S.A` con 9, el
-servicio devuelve **ambos candidatos con sus conteos reales** y una senal de posible
-duplicado. Nunca los fusiona, nunca los suma. La ambiguedad no es un defecto del
-sistema: es un hallazgo sobre la calidad de la publicacion oficial.
+servicio devuelve **ambos candidatos con sus conteos reales**. Nunca los fusiona,
+nunca los suma. No se senala si dos candidatos parecen duplicados entre si --
+decision de producto (2026-08-15): nombres parecidos pueden ser entidades
+distintas a proposito.
 
 ## Estado
 
 En construccion. Fase 0 del plan de arquitectura.
 
+El esquema `query` ya existe en [MIRA-ETL](https://github.com/mira-observatory/MIRA-ETL)
+(verificado contra produccion 2026-08-15): `v_process`, `v_buyers`, `v_suppliers`,
+`v_process_buyers`, `v_items`, `v_awards`, `v_award_items`, `v_award_suppliers`.
+Es un diseno normalizado -- un proceso tiene adjudicaciones, cada adjudicacion
+tiene proveedores e items; el monto vive en la adjudicacion, no en el proceso.
+Ver `docs/proposed-query-schema.md` para el detalle.
+
+**Dependencia bloqueante restante:** `query.v_coverage` (distingue "cero real" de
+"cero por falta de datos") y los indices de trigrama sobre `mart.suppliers` /
+`mart.buyers` (necesarios para que la resolucion de entidades del Hito 1 sea
+rapida) todavia no existen en MIRA-ETL. El DDL de las vistas y del esquema
+`query` es responsabilidad exclusiva de MIRA-ETL -- **no vive en este repo**.
+
 ## Arquitectura
 
-La version actual no tiene catalogo de consultas predefinidas: toda pregunta contestable se
+Esta version **no tiene catalogo de consultas predefinidas**. Toda pregunta se
 responde con SQL generado por el modelo, validado programaticamente antes de
-ejecutarse. Cada consulta -la pregunta, el SQL generado, si fue aceptada o
-rechazada y por que, cuantas filas devolvio- se guarda en `analytics.*`. Ese
-registro es la materia prima con la que mas adelante se construira el catalogo
-de consultas parametrizadas; no es un adorno de observabilidad.
+ejecutarse. Ese es el objetivo de esta fase: el registro de cada intento -pregunta,
+SQL generado, aceptado o rechazado y por que, filas devueltas- es la materia prima
+con la que mas adelante se construira un catalogo de consultas parametrizadas.
 
 ```text
 pregunta ->
-  normalizacion              (codigo)
-  clasificacion + params     (modelo rapido)
-  resolucion de entidades    (PostgreSQL, sin IA)
-  generacion de SQL          (modelo potente: Opus 5 o Sonnet 5)
-  validacion sqlglot         (codigo)      <- frontera de seguridad
-  ejecucion                  (PostgreSQL, rol de solo lectura)
-  redaccion + verificacion   (modelo rapido + codigo)
+  normalizacion            (codigo)
+  clasificacion + params   (modelo rapido)
+  resolucion de entidades  (PostgreSQL, sin IA)
+  generacion de SQL        (modelo potente)
+  validacion sqlglot       (codigo)
+  ejecucion                (PostgreSQL, rol de solo lectura)
+  redaccion + verificacion (modelo rapido + codigo)
 -> QueryResponse
 ```
 
@@ -105,7 +118,7 @@ Pruebas y calidad:
 |---|---|
 | `src/mira_api/api/` | Endpoints HTTP y esquemas de request/response |
 | `src/mira_api/db/` | Pool de conexiones y ejecutor de solo lectura. Unica frontera con el driver |
-| `src/mira_api/nlq/` | Resolucion de entidades, validador de SQL, pipeline de generacion |
+| `src/mira_api/nlq/` | Resolucion de entidades, generacion y validacion de SQL, pipeline de la consulta |
 | `src/mira_api/audit/` | Registro de consultas para auditoria y mejora continua |
 
 ### Cobertura publica

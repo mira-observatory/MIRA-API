@@ -21,8 +21,12 @@ class Column(BaseModel):
 class EntityCandidate(BaseModel):
     """Un candidato de comprador o proveedor, con su conteo real.
 
-    Nunca se fusionan candidatos parecidos. Si "Karro y Limon S.A" tiene 6 procesos
-    y "Carro y Limon S.A" tiene 9, se devuelven los dos con 6 y 9. Nunca 15.
+    Puede haber varios candidatos parecidos para la misma busqueda (p.ej.
+    "Karro y Limon S.A" y "Carro y Limon S.A"); se devuelven todos con su
+    conteo real, nunca fusionados. No se senala si dos candidatos parecen
+    duplicados entre si -- decision de producto (2026-08-15): nombres
+    parecidos pueden ser entidades distintas a proposito, y esa comparacion no
+    se hace.
     """
 
     entity_type: Literal["supplier", "buyer"]
@@ -34,16 +38,11 @@ class EntityCandidate(BaseModel):
     match_method: Literal["TAX_ID", "NAME_EXACT", "NAME_FUZZY"]
     similarity: float | None = None
     record_count: int = Field(description="Conteo real en la base, no una estimacion")
-    #: Otros candidatos que se le parecen. Alimenta la advertencia de posible
-    #: duplicado; no implica ninguna accion sobre los datos.
-    similar_to: list[int] = []
 
 
 class Warning(BaseModel):
     code: Literal[
-        "POSSIBLE_DUPLICATE_ENTITY",
         "PARTIAL_COVERAGE",
-        "MIXED_GRAIN",
         "MIXED_CURRENCY",
         "TRUNCATED_RESULT",
         "NULL_AMOUNTS_EXCLUDED",
@@ -111,9 +110,32 @@ class QueryResponse(BaseModel):
     timings_ms: dict[str, int] = {}
 
 
+class ConversationTurn(BaseModel):
+    """Una pregunta anterior y el SQL que la respondio.
+
+    Se manda el SQL, no las filas: es lo que deja resolver un seguimiento como
+    "¿y en Honduras?" cambiandole el pais a la consulta anterior, y ocupa poco
+    en el prompt.
+
+    Lo escribe el cliente, asi que no es confiable -- pero tampoco necesita
+    serlo: nada de aqui se ejecuta. Solo entra al prompt, y todo lo que el
+    modelo produzca despues pasa igual por el validador (lista blanca de
+    vistas, filtro de pais, LIMIT). Lo peor que logra un historial falseado es
+    que el modelo genere SQL que el validador rechaza.
+    """
+
+    question: str = Field(max_length=400)
+    countries: list[str] = Field(min_length=1)
+    sql: str = Field(max_length=4000)
+
+
 class QueryRequest(BaseModel):
     question: str = Field(max_length=400)
     countries: list[str] = Field(min_length=1)
+    #: Turnos anteriores de la conversacion, del mas viejo al mas reciente.
+    #: Acotado a proposito: cada turno son tokens de entrada en cada llamada,
+    #: y mas de tres rara vez ayuda a resolver un seguimiento.
+    history: list[ConversationTurn] = Field(default=[], max_length=3)
     date_from: str | None = None
     date_to: str | None = None
     process_status: str | None = None
