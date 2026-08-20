@@ -53,6 +53,7 @@ async def generate_narrative(
     max_attempts: int = 2,
     max_rows_in_prompt: int = 25,
     max_tokens: int = 512,
+    empty_reason: str | None = None,
 ) -> NarrativeResult:
     """T3.5 (redaccion) + T3.6 (verificador anti-alucinacion). Nunca bloquea
     la respuesta: si el modelo sigue inventando numeros despues del
@@ -61,8 +62,11 @@ async def generate_narrative(
     """
     usage = Usage()
     if row_count == 0:
+        # `empty_reason` viene del diagnostico de cobertura y explica POR QUE
+        # esta vacio. Sin el se caia en "No se encontraron resultados", que
+        # confunde "no hubo contrataciones" con "no tenemos esos datos".
         return NarrativeResult(
-            text=_fallback_template(row_count, truncated),
+            text=empty_reason or _fallback_template(row_count, truncated),
             verified=True,
             unverified_numbers=[],
             usage=usage,

@@ -7,12 +7,13 @@ from collections.abc import Callable
 from typing import Literal
 from uuid import uuid4
 
-from mira_api.api.schemas import Column, QueryRequest, QueryResponse
+from mira_api.api.schemas import Column, CoverageNote, QueryRequest, QueryResponse, Warning
 from mira_api.audit.outcomes import Outcome
 from mira_api.audit.writer import QueryLogRecord, write_audit_log
 from mira_api.db.executor import DatabaseError, QueryTimeout, ReadOnlyExecutor
 from mira_api.db.log_executor import LogExecutor
 from mira_api.llm.client import ClaudeApiError, ClaudeClient, ClaudeRefusal
+from mira_api.nlq.coverage_facts import diagnose_empty_result
 from mira_api.nlq.narrative import generate_narrative
 from mira_api.nlq.sql_generation import (
     GenerationAttempt,
@@ -339,13 +340,32 @@ async def run_query(
     timings_ms["db_ms"] = int((time.monotonic() - db_start) * 1000)
 
     columns = _columns_from_rows(rows_result.columns, rows_result.rows)
-    _emit("row_count", {"row_count": rows_result.row_count, "truncated": rows_result.truncated})
+    _emit(
+        "row_count",
+        {"row_count": rows_result.row_count, "truncated": rows_result.truncated},
+    )
     _emit(
         "rows",
         {"columns": [c.model_dump() for c in columns], "rows": rows_result.rows},
     )
 
     outcome = Outcome.OK_ZERO_ROWS if rows_result.row_count == 0 else Outcome.OK
+
+    # Un cero nunca se entrega desnudo: se averigua si es un cero real o si
+    # simplemente esos datos no estan cargados. Solo se consulta cuando no
+    # hubo filas, asi que no le cuesta nada al camino normal.
+    warnings: list[Warning] = []
+    coverage_note: CoverageNote | None = None
+    if rows_result.row_count == 0:
+        diagnosis = await diagnose_empty_result(
+            executor, countries=countries, relations=result.validated.relations
+        )
+        warnings = diagnosis.warnings
+        coverage_note = diagnosis.coverage
+        if warnings:
+            # Se emite antes que la narrativa: el motivo del vacio es la
+            # respuesta, no un adorno que llega despues.
+            _emit("warnings", {"warnings": [w.model_dump() for w in warnings]})
 
     narrative_text: str | None = None
     narrative_verified = False
@@ -361,6 +381,11 @@ async def run_query(
             truncated=rows_result.truncated,
             max_attempts=narrative_max_attempts,
             max_rows_in_prompt=narrative_max_rows_in_prompt,
+            # Con cero filas no se llama al modelo: se sirve una plantilla. Que
+            # esa plantilla explique el motivo real es la diferencia entre
+            # "no se encontraron resultados" y "Nicaragua no tiene
+            # adjudicaciones cargadas".
+            empty_reason=warnings[0].message_es if warnings else None,
         )
         timings_ms["narrative_ms"] = int((time.monotonic() - narrative_start) * 1000)
         await _charge_global_budget(
@@ -404,5 +429,7 @@ async def run_query(
         narrative=narrative_text,
         narrative_verified=narrative_verified,
         unverified_numbers=unverified_numbers,
+        warnings=warnings,
+        coverage=coverage_note,
         timings_ms=timings_ms,
     )
