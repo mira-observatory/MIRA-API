@@ -88,6 +88,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def _cabeceras_de_seguridad(http_request: Request, call_next):  # type: ignore[no-untyped-def]
+    """`nosniff` evita que el navegador adivine el tipo de una respuesta.
+
+    Sin el, una respuesta JSON que empiece con algo que parezca HTML puede
+    llegar a interpretarse como tal, y ahi el contenido -- que incluye texto
+    de la pregunta de quien consulta -- pasaria a ejecutarse como pagina. Es
+    una linea y no tiene contrapartida.
+    """
+    response = await call_next(http_request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
 app.include_router(router)
 
 

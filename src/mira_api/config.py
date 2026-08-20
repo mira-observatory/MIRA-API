@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -84,7 +84,32 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
 
     # --- red ---------------------------------------------------------------
+    #: Origenes exactos separados por coma. Nunca "*": ver el validador.
     cors_origins: str = "http://localhost:5173"
+
+    @field_validator("cors_origins")
+    @classmethod
+    def _rechazar_comodin(cls, value: str) -> str:
+        """Un comodin aqui abre el servicio a cualquier sitio web.
+
+        El servicio manda `allow_credentials=True` porque el chat necesita la
+        cookie anonima. Combinado con "*", Starlette le devuelve a cada quien
+        su propio origen en `Access-Control-Allow-Origin`, asi que **cualquier
+        pagina** podria llamar a la API desde el navegador de un visitante,
+        con su cookie, y leer la respuesta. Comprobado: con "*" un origen
+        inventado recibe permiso; con la lista explicita, no.
+
+        Es el atajo natural de alguien depurando un problema de CORS en
+        produccion, y por eso no basta con documentarlo: el servicio no
+        arranca.
+        """
+        if "*" in value:
+            raise ValueError(
+                "CORS_ORIGINS no admite '*': con allow_credentials cualquier sitio "
+                "podria usar la cookie del visitante. Enumera los origenes exactos, "
+                "separados por coma."
+            )
+        return value
 
     @property
     def cors_origin_list(self) -> list[str]:
