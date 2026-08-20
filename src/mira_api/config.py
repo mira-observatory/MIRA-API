@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # --- limites -----------------------------------------------------------
     max_question_chars: int = 400
     max_rows: int = 500
+    sql_max_attempts: int = Field(default=3, gt=0)
+    narrative_max_attempts: int = Field(default=2, gt=0)
+    narrative_max_rows_in_prompt: int = Field(default=25, gt=0)
     quota_per_day: int = 5
     quota_per_month: int = 15
     #: Presupuesto inicial (2026-08-18): $75/mes, repartido parejo en el mes.

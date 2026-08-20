@@ -3,7 +3,9 @@ from __future__ import annotations
 import pytest
 
 from mira_api.llm.client import Completion
-from mira_api.nlq.narrative import MAX_NARRATIVE_ATTEMPTS, generate_narrative
+from mira_api.nlq.narrative import generate_narrative
+
+MAX_NARRATIVE_ATTEMPTS = 2
 
 
 def _completion(text: str) -> Completion:
@@ -147,3 +149,22 @@ async def test_cero_filas_no_llama_al_modelo() -> None:
     assert result.verified is True
     assert "No se encontraron" in (result.text or "")
     assert len(client.calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_limita_las_filas_incluidas_en_el_prompt() -> None:
+    client = _ScriptedClient(["Se encontro un resultado."])
+
+    await generate_narrative(
+        client,  # type: ignore[arg-type]
+        model="claude-haiku-4-5-20251001",
+        question="muestra los procesos",
+        rows=[{"process_id": "p1"}, {"process_id": "p2"}],
+        row_count=2,
+        truncated=False,
+        max_rows_in_prompt=1,
+    )
+
+    prompt = str(client.calls[0][0]["content"])
+    assert "p1" in prompt
+    assert "p2" not in prompt

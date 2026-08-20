@@ -7,7 +7,6 @@ import pytest
 from mira_api.audit.outcomes import Outcome
 from mira_api.llm.client import Completion
 from mira_api.nlq.sql_generation import (
-    MAX_ATTEMPTS,
     GenerationFailed,
     OutOfScope,
     PriorTurn,
@@ -17,6 +16,7 @@ from mira_api.nlq.sql_generation import (
 )
 
 MAX_ROWS = 500
+MAX_ATTEMPTS = 3
 
 
 def _completion(text: str) -> Completion:

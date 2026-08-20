@@ -9,14 +9,6 @@ from mira_api.nlq.number_extraction import find_unverified_numbers
 from mira_api.nlq.prompts import NARRATIVE_RETRY_PROMPT, NARRATIVE_SYSTEM_PROMPT
 from mira_api.nlq.sql_generation import Usage
 
-#: Intento inicial + 1 reintento (Parte 1.7): si el segundo tambien alucina un
-#: numero, se sirve la plantilla determinista y se marca narrative_verified=False.
-MAX_NARRATIVE_ATTEMPTS = 2
-
-#: Cuantas filas del resultado se le mandan al modelo -- el resto de la tabla
-#: ya se le entrego al usuario en `rows`, la redaccion no necesita verlo todo.
-_MAX_ROWS_IN_PROMPT = 25
-
 @dataclass(frozen=True)
 class NarrativeResult:
     text: str | None
@@ -33,9 +25,13 @@ def _fallback_template(row_count: int, truncated: bool) -> str:
 
 
 def _build_user_message(
-    question: str, rows: list[dict[str, Any]], row_count: int, truncated: bool
+    question: str,
+    rows: list[dict[str, Any]],
+    row_count: int,
+    truncated: bool,
+    max_rows_in_prompt: int,
 ) -> str:
-    sample = rows[:_MAX_ROWS_IN_PROMPT]
+    sample = rows[:max_rows_in_prompt]
     payload = {
         "pregunta": question,
         "filas_totales": row_count,
@@ -53,6 +49,8 @@ async def generate_narrative(
     rows: list[dict[str, Any]],
     row_count: int,
     truncated: bool,
+    max_attempts: int = 2,
+    max_rows_in_prompt: int = 25,
     max_tokens: int = 512,
 ) -> NarrativeResult:
     """T3.5 (redaccion) + T3.6 (verificador anti-alucinacion). Nunca bloquea
@@ -70,10 +68,15 @@ async def generate_narrative(
         )
 
     messages: list[dict[str, object]] = [
-        {"role": "user", "content": _build_user_message(question, rows, row_count, truncated)}
+        {
+            "role": "user",
+            "content": _build_user_message(
+                question, rows, row_count, truncated, max_rows_in_prompt
+            ),
+        }
     ]
 
-    for attempt in range(1, MAX_NARRATIVE_ATTEMPTS + 1):
+    for attempt in range(1, max_attempts + 1):
         try:
             completion = await client.complete_text(
                 model=model,
@@ -100,7 +103,7 @@ async def generate_narrative(
             return NarrativeResult(
                 text=text, verified=True, unverified_numbers=[], usage=usage
             )
-        if attempt == MAX_NARRATIVE_ATTEMPTS:
+        if attempt == max_attempts:
             return NarrativeResult(
                 text=_fallback_template(row_count, truncated),
                 verified=False,

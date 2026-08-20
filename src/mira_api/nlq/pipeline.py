@@ -147,15 +147,18 @@ async def run_query(
     subject_key: str,
     prompt_version: str,
     app_version: str,
+    sql_max_attempts: int = 3,
+    narrative_max_attempts: int = 2,
+    narrative_max_rows_in_prompt: int = 25,
     on_event: StreamCallback | None = None,
 ) -> QueryResponse:
     """Orquesta el pipeline completo: presupuesto -> normalizar -> generar SQL
     -> validar (dentro de generate_validated_sql) -> ejecutar -> redactar y
     verificar (T3.5/T3.6) -> armar la respuesta.
 
-    La redaccion nunca bloquea la respuesta: si el verificador la descarta dos
-    veces, se sirve una plantilla determinista y narrative_verified queda en
-    False, pero las filas ya estan en la respuesta de todas formas.
+    La redaccion nunca bloquea la respuesta: si el verificador agota sus
+    intentos, se sirve una plantilla determinista y narrative_verified queda
+    en False, pero las filas ya estan en la respuesta de todas formas.
 
     `on_event` (Hito 7) reporta las mismas fases segun van quedando listas --
     GET /v1/query lo deja en None (solo le interesa el QueryResponse final),
@@ -217,6 +220,7 @@ async def run_query(
             question=question,
             countries=countries,
             max_rows=max_rows,
+            max_attempts=sql_max_attempts,
             history=[
                 PriorTurn(
                     question=turn.question,
@@ -351,6 +355,8 @@ async def run_query(
             rows=rows_result.rows,
             row_count=rows_result.row_count,
             truncated=rows_result.truncated,
+            max_attempts=narrative_max_attempts,
+            max_rows_in_prompt=narrative_max_rows_in_prompt,
         )
         timings_ms["narrative_ms"] = int((time.monotonic() - narrative_start) * 1000)
         await _charge_global_budget(

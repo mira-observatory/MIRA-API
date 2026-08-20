@@ -213,8 +213,7 @@ async def test_pregunta_fuera_de_dominio_no_ejecuta_nada() -> None:
 
 @pytest.mark.asyncio
 async def test_sql_irrecuperable_no_ejecuta_nada() -> None:
-    from mira_api.nlq.sql_generation import MAX_ATTEMPTS
-
+    MAX_ATTEMPTS = 3
     client = _ScriptedClient(["select * from mart.processes"] * MAX_ATTEMPTS)
     executor = _ScriptedExecutor(error=AssertionError("no deberia ejecutarse"))
 
@@ -391,8 +390,7 @@ async def test_narrativa_verificada_se_incluye_en_la_respuesta() -> None:
 
 @pytest.mark.asyncio
 async def test_narrativa_alucinada_degrada_el_outcome_sin_perder_los_datos() -> None:
-    from mira_api.nlq.narrative import MAX_NARRATIVE_ATTEMPTS
-
+    MAX_NARRATIVE_ATTEMPTS = 2
     client = _ScriptedClient(
         [
             "select count(*) as total from query.v_process where country_code = 'CR'",
@@ -504,8 +502,7 @@ async def test_consulta_ok_escribe_query_log_y_un_query_attempt_aceptado() -> No
 
 @pytest.mark.asyncio
 async def test_sql_irrecuperable_escribe_un_query_attempt_por_intento_rechazado() -> None:
-    from mira_api.nlq.sql_generation import MAX_ATTEMPTS
-
+    MAX_ATTEMPTS = 3
     client = _ScriptedClient(["select * from mart.processes"] * MAX_ATTEMPTS)
     executor = _ScriptedExecutor(error=AssertionError("no deberia ejecutarse"))
     log_executor = _FakeLogExecutor()

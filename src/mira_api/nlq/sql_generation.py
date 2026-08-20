@@ -12,11 +12,6 @@ from mira_api.nlq.prompts import (
 from mira_api.nlq.semantic_dictionary import ColumnDoc, format_for_prompt
 from mira_api.nlq.validator import SqlRejected, ValidatedSql, validate
 
-#: Intento inicial + 2 reintentos. Dos fallos de validador seguidos significan
-#: que la pregunta no es expresable contra el esquema -- un tercer intento no
-#: cambia eso. Ver Parte 1.8 del plan de arquitectura.
-MAX_ATTEMPTS = 3
-
 #: Sentinela que el modelo devuelve cuando la pregunta no se puede responder
 #: con las columnas disponibles. No pasa por el validador -- se detecta antes.
 OUT_OF_SCOPE_SENTINEL = "OUT_OF_SCOPE"
@@ -32,7 +27,7 @@ class OutOfScope(Exception):
 
 
 class GenerationFailed(Exception):
-    """Se agotaron los MAX_ATTEMPTS intentos sin una consulta valida. Envuelve
+    """Se agotaron los intentos configurados sin una consulta valida. Envuelve
     el ultimo SqlRejected del validador (mismo outcome/rule/detail) y le suma
     el uso acumulado de TODOS los intentos -- un reintento tambien gasta
     tokens, el presupuesto tiene que contarlos aunque la generacion falle."""
@@ -154,10 +149,11 @@ async def generate_validated_sql(
     countries: list[str],
     max_rows: int,
     history: list[PriorTurn] | None = None,
+    max_attempts: int = 3,
     max_tokens: int = 4096,
 ) -> GenerationResult:
     """Genera SQL, lo valida, y si el validador lo rechaza reintenta hasta
-    MAX_ATTEMPTS pasandole el error como retroalimentacion. Nunca ejecuta SQL
+    `max_attempts` veces pasandole el error como retroalimentacion. Nunca ejecuta SQL
     -- eso es responsabilidad de quien llama, con el resultado ya validado.
 
     Levanta OutOfScope si el modelo determina que la pregunta no es
@@ -169,7 +165,7 @@ async def generate_validated_sql(
     attempts: list[GenerationAttempt] = []
     usage = Usage()
 
-    for attempt_no in range(1, MAX_ATTEMPTS + 1):
+    for attempt_no in range(1, max_attempts + 1):
         completion = await client.complete_text(
             model=model, system=system, messages=messages, max_tokens=max_tokens
         )
@@ -203,7 +199,7 @@ async def generate_validated_sql(
                     outcome=err.outcome,
                 )
             )
-            if attempt_no == MAX_ATTEMPTS:
+            if attempt_no == max_attempts:
                 raise GenerationFailed(err, usage, attempts) from err
             messages.append({"role": "assistant", "content": raw})
             messages.append(

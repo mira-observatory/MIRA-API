@@ -49,3 +49,36 @@ def test_variables_obligatorias_no_tienen_valor_por_defecto() -> None:
     required_fields = {name for name, field in Settings.model_fields.items() if field.is_required()}
     expected = {key.lower() for key in REQUIRED_VARS}
     assert expected <= required_fields
+
+
+def test_limites_de_reintentos_se_cargan_desde_el_ambiente(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_required(monkeypatch)
+    for key, value in REQUIRED_VARS.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("SQL_MAX_ATTEMPTS", "4")
+    monkeypatch.setenv("NARRATIVE_MAX_ATTEMPTS", "5")
+    monkeypatch.setenv("NARRATIVE_MAX_ROWS_IN_PROMPT", "30")
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.sql_max_attempts == 4
+    assert settings.narrative_max_attempts == 5
+    assert settings.narrative_max_rows_in_prompt == 30
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["SQL_MAX_ATTEMPTS", "NARRATIVE_MAX_ATTEMPTS", "NARRATIVE_MAX_ROWS_IN_PROMPT"],
+)
+def test_limites_de_reintentos_deben_ser_mayores_que_cero(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_required(monkeypatch)
+    for key, value in REQUIRED_VARS.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv(name, "0")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)  # type: ignore[call-arg]
