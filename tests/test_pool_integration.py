@@ -96,6 +96,12 @@ async def readonly_dsn() -> AsyncIterator[str]:
         try:
             yield dsn
         finally:
+            # DROP ROLE falla con DependentObjectsStillExist mientras al rol le
+            # queden privilegios concedidos (aqui, sobre el esquema query y la
+            # tabla v_process). DROP OWNED BY los retira todos en esta base, y
+            # cubre de paso cualquier GRANT que se agregue arriba en el futuro
+            # y alguien olvide revocar a mano.
+            await admin.execute(sql.SQL("drop owned by {}").format(sql.Identifier(role)))
             await admin.execute(
                 sql.SQL("drop role if exists {}").format(sql.Identifier(role))
             )
@@ -104,6 +110,10 @@ async def readonly_dsn() -> AsyncIterator[str]:
 def _settings_for(dsn: str) -> Settings:
     return Settings(
         database_url_query=dsn,
+        # Obligatorio aunque estas pruebas no lo usen: Settings falla al
+        # construirse si falta, y ese fallo aqui solo aparecia en CI porque
+        # el modulo entero se salta sin MIRA_TEST_DB_ADMIN_URL.
+        database_url_web=dsn,
         database_url_log=dsn,
         token_hmac_secret="test-secret",
         pool_min_size=1,
