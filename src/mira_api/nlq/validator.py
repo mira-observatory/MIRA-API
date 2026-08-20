@@ -17,10 +17,19 @@ from mira_api.audit.outcomes import Outcome
 #: vive en la adjudicacion, no en el proceso. "Cuanto se gasto" siempre requiere
 #: join v_process -> v_awards -> v_award_suppliers.
 #:
-#: query.v_coverage TODAVIA NO EXISTE en MIRA-ETL (bloquea distinguir "cero
-#: real" de "cero por falta de datos"). Agregarla aqui cuando exista alla, no
-#: antes. No se pide query.v_duplicate_hints: decision de producto
-#: (2026-08-15) de no senalar posibles duplicados entre entidades parecidas.
+#: Dos vistas quedan deliberadamente fuera:
+#:
+#: query.v_duplicate_hints no existe en la base (verificado contra produccion
+#: 2026-08-20) y no va a existir: decision de producto (2026-08-15) de no
+#: senalar posibles duplicados entre entidades parecidas, porque dos nombres
+#: parecidos pueden ser entidades distintas a proposito.
+#:
+#: query.v_coverage si existe, pero son metadatos de las corridas del ETL, no
+#: datos de contrataciones. La cobertura se sirve por GET /coverage, que lee
+#: agregados exactos de web.coverage_sources -- no tiene por que pasar por el
+#: modelo. Describirsela ademas garantizaba el peor final posible: el modelo
+#: generaba SQL contra ella, el validador lo rechazaba, y se gastaban los 3
+#: intentos para terminar en REJECTED_SQL_RELATION.
 ALLOWED_RELATIONS: frozenset[str] = frozenset(
     {
         "query.v_process",

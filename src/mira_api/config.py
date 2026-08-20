@@ -20,9 +20,13 @@ class Settings(BaseSettings):
     database_url_query: str = Field(description="DSN de PostgreSQL para consultas NLQ de lectura")
     # Rol de solo lectura para endpoints publicos de SQL fijo. No tiene acceso al
     # esquema `query` usado por el modelo ni a las tablas internas de `mart`.
-    database_url_web: str = Field(
-        description="DSN de PostgreSQL para datos publicos deterministas"
-    )
+    #
+    # Obligatorio: el rol mira_web ya existe en produccion (creado 2026-08-20).
+    # Estuvo temporalmente opcional mientras no existia, para que una
+    # funcionalidad sin aprovisionar no impidiera arrancar el servicio entero.
+    # Ese motivo ya no aplica, y fallar al arrancar es mejor que fallar a mitad
+    # de una peticion.
+    database_url_web: str = Field(description="DSN de PostgreSQL para datos publicos deterministas")
     # Rol minimo de escritura, solo para el esquema analytics (mira_logger).
     database_url_log: str = Field(description="DSN de PostgreSQL para el registro de auditoria")
 

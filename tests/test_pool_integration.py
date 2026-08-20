@@ -20,6 +20,7 @@ from urllib.parse import urlsplit, urlunsplit
 import psycopg
 import pytest
 import pytest_asyncio
+from psycopg import sql
 from psycopg_pool import PoolTimeout
 
 from mira_api.config import Settings
@@ -33,6 +34,14 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+async def _parece_la_base_real(admin: psycopg.AsyncConnection) -> bool:
+    """El esquema `mart` solo existe donde corrio MIRA-ETL. Un Postgres
+    desechable de CI no lo tiene."""
+    cur = await admin.execute("select to_regnamespace('mart') is not null")
+    row = await cur.fetchone()
+    return bool(row and row[0])
+
+
 @pytest_asyncio.fixture
 async def readonly_dsn() -> AsyncIterator[str]:
     """Crea un esquema `query` de prueba y un rol de solo lectura sobre el, imitando
@@ -43,6 +52,16 @@ async def readonly_dsn() -> AsyncIterator[str]:
 
     assert ADMIN_DSN is not None
     async with await psycopg.AsyncConnection.connect(ADMIN_DSN, autocommit=True) as admin:
+        # Esta prueba crea y borra roles, y hace DELETE sobre query.v_process.
+        # Contra la base real eso destruye datos. El unico resguardo era que
+        # nadie exportara MIRA_TEST_DB_ADMIN_URL apuntando ahi -- muy poco para
+        # lo que esta en juego. Se aborta antes de ejecutar nada destructivo.
+        if await _parece_la_base_real(admin):
+            pytest.fail(
+                "MIRA_TEST_DB_ADMIN_URL apunta a una base con esquema `mart`: es la real. "
+                "Esta prueba borra filas y crea roles; usa un Postgres desechable "
+                "(ver el servicio postgres:16 en .github/workflows/ci.yml)."
+            )
         await admin.execute("create schema if not exists query")
         await admin.execute(
             "create table if not exists query.v_process "
@@ -53,9 +72,22 @@ async def readonly_dsn() -> AsyncIterator[str]:
             "insert into query.v_process values (1, 'GT'), (2, 'CR') "
             "on conflict do nothing"
         )
-        await admin.execute(f"create role {role} login password %s", (password,))
-        await admin.execute(f"grant usage on schema query to {role}")
-        await admin.execute(f"grant select on query.v_process to {role}")
+        # PostgreSQL no acepta parametros ($1) en sentencias de utilidad como
+        # CREATE ROLE, asi que `execute(sql, (password,))` falla con
+        # "syntax error at or near $1". Hay que componer la sentencia, no
+        # interpolarla a mano: sql.Literal escapa las comillas de la
+        # contrasena y sql.Identifier cita el nombre del rol.
+        await admin.execute(
+            sql.SQL("create role {} login password {}").format(
+                sql.Identifier(role), sql.Literal(password)
+            )
+        )
+        await admin.execute(
+            sql.SQL("grant usage on schema query to {}").format(sql.Identifier(role))
+        )
+        await admin.execute(
+            sql.SQL("grant select on query.v_process to {}").format(sql.Identifier(role))
+        )
 
         parts = urlsplit(ADMIN_DSN)
         netloc = f"{role}:{password}@{parts.hostname}:{parts.port or 5432}"
@@ -64,12 +96,24 @@ async def readonly_dsn() -> AsyncIterator[str]:
         try:
             yield dsn
         finally:
-            await admin.execute(f"drop role if exists {role}")
+            # DROP ROLE falla con DependentObjectsStillExist mientras al rol le
+            # queden privilegios concedidos (aqui, sobre el esquema query y la
+            # tabla v_process). DROP OWNED BY los retira todos en esta base, y
+            # cubre de paso cualquier GRANT que se agregue arriba en el futuro
+            # y alguien olvide revocar a mano.
+            await admin.execute(sql.SQL("drop owned by {}").format(sql.Identifier(role)))
+            await admin.execute(
+                sql.SQL("drop role if exists {}").format(sql.Identifier(role))
+            )
 
 
 def _settings_for(dsn: str) -> Settings:
     return Settings(
         database_url_query=dsn,
+        # Obligatorio aunque estas pruebas no lo usen: Settings falla al
+        # construirse si falta, y ese fallo aqui solo aparecia en CI porque
+        # el modulo entero se salta sin MIRA_TEST_DB_ADMIN_URL.
+        database_url_web=dsn,
         database_url_log=dsn,
         token_hmac_secret="test-secret",
         pool_min_size=1,

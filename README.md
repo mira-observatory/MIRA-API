@@ -132,6 +132,38 @@ Pruebas y calidad:
 .venv/bin/mypy
 ```
 
+## Verificacion despues de una recarga del ETL
+
+Una recarga puede dejar los datos perfectos y aun asi romper el servicio: si se
+recrean los esquemas, los permisos de `mira_query` y `mira_logger` se pierden, y
+esos se otorgan a mano (MIRA-ETL, `docs/database_security.md`), no desde `sql/`.
+
+**Primero, el contrato con la base.** No llama al modelo, no cuesta nada:
+
+```bash
+.venv/bin/python -m mira_api.evals.contract
+```
+
+Comprueba que `mira_query` lee las vistas permitidas y **no** alcanza `mart.*`,
+que `query.f_unaccent` responde, que el diccionario semantico esta poblado, que
+`mira_logger` puede escribir, que el `CHECK` de `outcome` cubre la taxonomia
+completa, y que no hay montos absurdos en USD/EUR. Sale con codigo 1 si algo
+falla, y dice que revisar.
+
+**Despues, las preguntas de referencia.** Cada una es una llamada real a Claude
+con costo real, asi que no corre con `pytest`:
+
+```bash
+.venv/bin/python -m mira_api.evals.runner
+```
+
+Ninguna espera un valor concreto: los datos cambian en cada recarga y una suite
+que se cae porque hay otro numero de procesos no mide nada. Afirman invariantes
+--que la consulta filtre por el pais pedido, que toque las vistas correctas, que
+la narrativa no cite un numero ausente del resultado, que lo que esta fuera de
+dominio no genere SQL-- y varias vigilan regresiones de bugs concretos, anotadas
+en `src/mira_api/evals/cases.py`.
+
 ## Estructura
 
 | Ruta | Responsabilidad |
@@ -140,6 +172,8 @@ Pruebas y calidad:
 | `src/mira_api/db/` | Pool de conexiones y ejecutor de solo lectura. Unica frontera con el driver |
 | `src/mira_api/nlq/` | Resolucion de entidades, generacion y validacion de SQL, pipeline de la consulta |
 | `src/mira_api/audit/` | Registro de consultas para auditoria y mejora continua |
+| `src/mira_api/quota/` | Presupuesto global y cuota por sujeto (escrita, inactiva) |
+| `src/mira_api/evals/` | Contrato con la base y preguntas de referencia. No corre con pytest |
 
 ### Cobertura publica
 

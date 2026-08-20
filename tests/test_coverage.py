@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from mira_api.db.coverage import COVERAGE_SQL, build_coverage_response
 
@@ -27,9 +27,9 @@ def _row(
         "partial_process_count": 0,
         "process_without_date_count": 0,
         "last_successful_load_at": (
-            datetime(2026, 8, 18, tzinfo=timezone.utc) if active else None
+            datetime(2026, 8, 18, tzinfo=UTC) if active else None
         ),
-        "refreshed_at": datetime(2026, 8, 18, tzinfo=timezone.utc),
+        "refreshed_at": datetime(2026, 8, 18, tzinfo=UTC),
         "sort_order": 0,
     }
 

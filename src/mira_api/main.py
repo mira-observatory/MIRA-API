@@ -41,9 +41,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
     app.state.read_pool = build_read_pool(settings)
     app.state.log_pool = build_log_pool(settings)
-    app.state.web_pool = build_web_pool(settings)
+    # DATABASE_URL_WEB es obligatorio, pero "obligatorio" en pydantic solo exige
+    # que la clave exista: una cadena vacia pasa la validacion. Sin esta guarda,
+    # ese descuido deja /coverage colgado hasta el timeout del pool en vez de
+    # decir que esta mal configurado.
+    app.state.web_pool = build_web_pool(settings) if settings.database_url_web else None
     await app.state.read_pool.open()
     await app.state.log_pool.open()
+    if app.state.web_pool is not None:
+        await app.state.web_pool.open()
     app.state.executor = ReadOnlyExecutor(app.state.read_pool)
     app.state.log_executor = LogExecutor(app.state.log_pool)
 
@@ -60,7 +66,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         await app.state.read_pool.close()
         await app.state.log_pool.close()
-        await app.state.web_pool.close()
+        if app.state.web_pool is not None:
+            await app.state.web_pool.close()
 
 
 app = FastAPI(

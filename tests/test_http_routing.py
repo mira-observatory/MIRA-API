@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 def test_public_routes_are_not_version_prefixed(monkeypatch) -> None:
     monkeypatch.setenv("DATABASE_URL_QUERY", "postgresql://user:pass@localhost/query")
     monkeypatch.setenv("DATABASE_URL_WEB", "postgresql://user:pass@localhost/web")

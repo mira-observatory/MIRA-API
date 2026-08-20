@@ -46,10 +46,20 @@ def test_falla_al_construir_si_falta_una_variable_obligatoria(
     assert missing.lower() in str(err.value)
 
 
-def test_variables_obligatorias_no_tienen_valor_por_defecto() -> None:
+def test_variables_obligatorias_son_exactamente_estas() -> None:
+    """Igualdad, no subconjunto, a proposito.
+
+    Volver obligatorio un campo rompe todos los sitios que construyen Settings
+    a mano, y varios viven en pruebas que se saltan sin Postgres real: el fallo
+    aparece recien en CI, lejos del cambio que lo causo. Paso exactamente eso
+    con database_url_web el 2026-08-20.
+
+    Con igualdad, agregar un campo obligatorio falla aqui de inmediato y en
+    cualquier maquina, y obliga a revisar REQUIRED_VARS y los demas sitios.
+    """
     required_fields = {name for name, field in Settings.model_fields.items() if field.is_required()}
     expected = {key.lower() for key in REQUIRED_VARS}
-    assert expected <= required_fields
+    assert required_fields == expected
 
 
 def test_limites_de_reintentos_se_cargan_desde_el_ambiente(
