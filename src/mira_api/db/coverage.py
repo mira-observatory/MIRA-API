@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import date, datetime
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar
 
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
@@ -22,10 +22,8 @@ COVERAGE_SQL = """
             country_code,
             display_name as country_name,
             flag_asset,
-            status as country_status,
             sort_order
         from web.countries
-        where status in ('ACTIVE', 'PLANNED')
 
         union all
 
@@ -33,7 +31,6 @@ COVERAGE_SQL = """
             source_countries.country_code,
             source_countries.country_code as country_name,
             '/flags/' || lower(source_countries.country_code) || '.svg' as flag_asset,
-            'PLANNED' as country_status,
             source_countries.sort_order
         from (
             select country_code, min(sort_order) as sort_order
@@ -51,7 +48,6 @@ COVERAGE_SQL = """
         country_catalog.country_code,
         country_catalog.country_name,
         country_catalog.flag_asset,
-        country_catalog.country_status,
         source.source_key,
         source.source_system,
         source.display_name,
@@ -94,10 +90,7 @@ def build_coverage_response(rows: list[dict[str, Any]]) -> CoverageResponse:
     countries: list[CoverageCountry] = []
     for country_code, country_rows in grouped.items():
         active = [row for row in country_rows if row["status"] == "ACTIVE"]
-        country_status = cast(
-            Literal["ACTIVE", "PLANNED", "INACTIVE"],
-            "ACTIVE" if active else country_rows[0]["country_status"],
-        )
+        country_status: Literal["ACTIVE", "PLANNED"] = "ACTIVE" if active else "PLANNED"
         sources = [
             _source_from_row(row) for row in country_rows if row["source_key"] is not None
         ]

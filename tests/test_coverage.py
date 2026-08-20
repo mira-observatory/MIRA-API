@@ -17,7 +17,6 @@ def _row(
         "country_code": country_code,
         "country_name": country_code,
         "flag_asset": f"/flags/{country_code.lower()}.svg",
-        "country_status": "PLANNED",
         "source_system": source_key,
         "display_name": source_key,
         "status": status,
