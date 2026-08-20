@@ -6,7 +6,8 @@ from pydantic import ValidationError
 from mira_api.config import Settings
 
 REQUIRED_VARS = {
-    "DATABASE_URL": "postgresql://mira_query:pw@localhost:5432/postgres",
+    "DATABASE_URL_QUERY": "postgresql://mira_query:pw@localhost:5432/postgres",
+    "DATABASE_URL_WEB": "postgresql://mira_web:pw@localhost:5432/postgres",
     "DATABASE_URL_LOG": "postgresql://mira_logger:pw@localhost:5432/postgres",
     "TOKEN_HMAC_SECRET": "test-secret",
 }
@@ -24,7 +25,7 @@ def test_arranca_con_todas_las_variables_obligatorias(monkeypatch: pytest.Monkey
     # _env_file=None evita que un .env real de la maquina del desarrollador
     # enmascare la ausencia de una variable de entorno.
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
-    assert settings.database_url == REQUIRED_VARS["DATABASE_URL"]
+    assert settings.database_url_query == REQUIRED_VARS["DATABASE_URL_QUERY"]
 
 
 @pytest.mark.parametrize("missing", sorted(REQUIRED_VARS))

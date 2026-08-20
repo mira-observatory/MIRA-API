@@ -10,14 +10,14 @@ class Settings(BaseSettings):
     """Configuracion del servicio.
 
     Nada aqui menciona a Supabase a proposito: el servicio habla con un PostgreSQL
-    estandar. Migrar de proveedor es cambiar el valor de DATABASE_URL.
+    estandar. Migrar de proveedor es cambiar el valor de DATABASE_URL_QUERY.
     """
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # --- base de datos -----------------------------------------------------
     # Rol de solo lectura (mira_query). Sin permisos de escritura en ningun esquema.
-    database_url: str = Field(description="DSN de PostgreSQL para consultas de lectura")
+    database_url_query: str = Field(description="DSN de PostgreSQL para consultas NLQ de lectura")
     # Rol de solo lectura para endpoints publicos de SQL fijo. No tiene acceso al
     # esquema `query` usado por el modelo ni a las tablas internas de `mart`.
     database_url_web: str = Field(

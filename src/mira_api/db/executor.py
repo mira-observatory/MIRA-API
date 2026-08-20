@@ -37,7 +37,7 @@ class ReadOnlyExecutor:
       inyectar SQL.
 
     `db/` es la unica frontera del servicio que importa psycopg; ningun otro modulo
-    lo hace, para que migrar de proveedor sea cambiar `DATABASE_URL`.
+    lo hace, para que migrar de proveedor sea cambiar `DATABASE_URL_QUERY`.
     """
 
     def __init__(self, pool: AsyncConnectionPool) -> None:

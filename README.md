@@ -72,7 +72,7 @@ Solo tres etapas involucran al modelo de IA, y ninguna de ellas toca un numero.
 
 ## Portabilidad
 
-El servicio se conecta a un PostgreSQL estandar mediante `DATABASE_URL`. Hoy ese
+El servicio se conecta a un PostgreSQL estandar mediante `DATABASE_URL_QUERY`. Hoy ese
 PostgreSQL esta alojado en Supabase; **no se usa ninguna funcionalidad propia de
 Supabase** (ni PostgREST, ni auth, ni RLS como autorizacion de la aplicacion). El
 dia de la migracion cambia el valor de una variable de entorno.
@@ -151,7 +151,7 @@ Las tres conexiones del servicio tienen privilegios separados:
 
 | Variable | Rol | Acceso |
 |---|---|---|
-| `DATABASE_URL` | `mira_query` | Vistas permitidas de `query` para NLQ |
+| `DATABASE_URL_QUERY` | `mira_query` | Vistas permitidas de `query` para NLQ |
 | `DATABASE_URL_WEB` | `mira_web` | `web.coverage_sources` |
 | `DATABASE_URL_LOG` | `mira_logger` | Escritura de auditoria en `analytics` |
 

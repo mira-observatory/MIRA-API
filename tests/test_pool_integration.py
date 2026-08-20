@@ -69,7 +69,7 @@ async def readonly_dsn() -> AsyncIterator[str]:
 
 def _settings_for(dsn: str) -> Settings:
     return Settings(
-        database_url=dsn,
+        database_url_query=dsn,
         database_url_log=dsn,
         token_hmac_secret="test-secret",
         pool_min_size=1,
