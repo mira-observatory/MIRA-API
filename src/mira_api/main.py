@@ -40,6 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
     app.state.read_pool = build_read_pool(settings)
     app.state.log_pool = build_log_pool(settings)
+    app.state.web_pool = build_web_pool(settings)
     await app.state.read_pool.open()
     await app.state.log_pool.open()
     app.state.executor = ReadOnlyExecutor(app.state.read_pool)
@@ -58,6 +59,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         await app.state.read_pool.close()
         await app.state.log_pool.close()
+        await app.state.web_pool.close()
 
 
 app = FastAPI(
@@ -77,6 +79,8 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+app.include_router(router)
 
 
 @app.get("/healthz")

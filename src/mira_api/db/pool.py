@@ -17,6 +17,14 @@ _READ_ONLY_OPTIONS = (
     "-c search_path=query"
 )
 
+_WEB_READ_ONLY_OPTIONS = (
+    "-c statement_timeout=3000 "
+    "-c idle_in_transaction_session_timeout=10000 "
+    "-c lock_timeout=1000 "
+    "-c default_transaction_read_only=on "
+    "-c search_path=web"
+)
+
 
 def _with_options(dsn: str, options: str) -> str:
     separator = "&" if "?" in dsn else "?"
@@ -62,5 +70,19 @@ def build_log_pool(settings: Settings) -> AsyncConnectionPool:
         timeout=5.0,
         max_waiting=200,
         max_lifetime=1800,
+        open=False,
+    )
+
+
+def build_web_pool(settings: Settings) -> AsyncConnectionPool:
+    """Pool aislado para endpoints publicos respaldados por SQL fijo."""
+    return AsyncConnectionPool(
+        conninfo=_with_options(settings.database_url_web, _WEB_READ_ONLY_OPTIONS),
+        min_size=1,
+        max_size=settings.web_pool_max_size,
+        timeout=settings.pool_timeout_s,
+        max_waiting=32,
+        max_lifetime=1800,
+        max_idle=300,
         open=False,
     )

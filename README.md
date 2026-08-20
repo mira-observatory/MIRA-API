@@ -82,19 +82,34 @@ nunca importa `psycopg`.
 
 ## Desarrollo
 
+En macOS o Linux, instala el proyecto y sus dependencias de desarrollo con:
+
 ```bash
-python -m venv .venv
-.venv/Scripts/pip install -e ".[dev]"
-cp .env.example .env      # y completa los valores
-.venv/Scripts/uvicorn mira_api.main:app --reload
+./scripts/install.sh
+```
+
+El instalador crea `.venv`, instala el paquete y crea `.env` desde
+`.env.example` si todavía no existe. Completa las credenciales de `.env` y
+arranca el servidor con:
+
+```bash
+./scripts/run.sh
+```
+
+Por defecto escucha en `http://127.0.0.1:8000` con recarga automática. El host
+y el puerto se pueden configurar, y los argumentos adicionales se pasan a
+Uvicorn:
+
+```bash
+HOST=0.0.0.0 PORT=8080 ./scripts/run.sh --log-level debug
 ```
 
 Pruebas y calidad:
 
 ```bash
-.venv/Scripts/pytest
-.venv/Scripts/ruff check src tests
-.venv/Scripts/mypy
+.venv/bin/pytest
+.venv/bin/ruff check src tests
+.venv/bin/mypy
 ```
 
 ## Estructura
@@ -106,10 +121,27 @@ Pruebas y calidad:
 | `src/mira_api/nlq/` | Resolucion de entidades, generacion y validacion de SQL, pipeline de la consulta |
 | `src/mira_api/audit/` | Registro de consultas para auditoria y mejora continua |
 
+### Cobertura publica
+
+`GET /coverage` es un endpoint determinista respaldado por una consulta SQL
+constante sobre `web.coverage_sources`. Usa su propio pool y el rol `mira_web`;
+no invoca modelos, no consume cuota y no pasa por el validador de SQL generado.
+
+Las tres conexiones del servicio tienen privilegios separados:
+
+| Variable | Rol | Acceso |
+|---|---|---|
+| `DATABASE_URL` | `mira_query` | Vistas permitidas de `query` para NLQ |
+| `DATABASE_URL_WEB` | `mira_web` | `web.coverage_sources` |
+| `DATABASE_URL_LOG` | `mira_logger` | Escritura de auditoria en `analytics` |
+
 ## Lo que este repositorio nunca hace
 
 - **Nunca ejecuta DDL.** Todo el esquema, las vistas de consulta y los roles viven
   en `MIRA-ETL/sql/`.
+- **No tiene catalogo de consultas predefinidas.** Toda pregunta contestable
+  se responde con SQL generado por el modelo y validado antes de ejecutarse. El
+  catalogo, si llega, se derivara despues del registro de auditoria.
 - **Nunca normaliza nombres de entidades.** Esa logica es del ETL; aqui se consumen
   las columnas ya normalizadas.
 - **Nunca consulta `mart`, `raw`, `staging` ni `audit` directamente.** Solo el

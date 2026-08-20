@@ -18,15 +18,23 @@ class Settings(BaseSettings):
     # --- base de datos -----------------------------------------------------
     # Rol de solo lectura (mira_query). Sin permisos de escritura en ningun esquema.
     database_url: str = Field(description="DSN de PostgreSQL para consultas de lectura")
+    # Rol de solo lectura para endpoints publicos de SQL fijo. No tiene acceso al
+    # esquema `query` usado por el modelo ni a las tablas internas de `mart`.
+    database_url_web: str = Field(
+        description="DSN de PostgreSQL para datos publicos deterministas"
+    )
     # Rol minimo de escritura, solo para el esquema analytics (mira_logger).
     database_url_log: str = Field(description="DSN de PostgreSQL para el registro de auditoria")
 
     pool_min_size: int = 2
     pool_max_size: int = 8
     pool_timeout_s: float = 5.0
+    web_pool_max_size: int = 4
     statement_timeout_ms: int = 8000
 
     # --- modelo de lenguaje ------------------------------------------------
+    # No hay catalogo de plantillas: toda pregunta contestable se responde con
+    # SQL generado por el modelo, validado antes de ejecutarse. Ver seccion 1.4.
     anthropic_api_key: str = ""
     model_fast: str = "claude-haiku-4-5-20251001"
     # Modelo que genera el SQL. No hay catalogo de consultas en esta version: toda
