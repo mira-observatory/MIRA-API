@@ -10,25 +10,23 @@ class Settings(BaseSettings):
     """Configuracion del servicio.
 
     Nada aqui menciona a Supabase a proposito: el servicio habla con un PostgreSQL
-    estandar. Migrar de proveedor es cambiar el valor de DATABASE_URL.
+    estandar. Migrar de proveedor es cambiar el valor de DATABASE_URL_QUERY.
     """
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # --- base de datos -----------------------------------------------------
     # Rol de solo lectura (mira_query). Sin permisos de escritura en ningun esquema.
-    database_url: str = Field(description="DSN de PostgreSQL para consultas de lectura")
+    database_url_query: str = Field(description="DSN de PostgreSQL para consultas NLQ de lectura")
     # Rol de solo lectura para endpoints publicos de SQL fijo. No tiene acceso al
     # esquema `query` usado por el modelo ni a las tablas internas de `mart`.
     #
-    # Opcional a proposito: el rol mira_web todavia no existe en produccion
-    # (2026-08-20). Si fuera obligatorio, una funcionalidad sin aprovisionar
-    # impediria arrancar el servicio entero, incluido el chat, que no la usa.
-    # Vacio => no se abre el pool y GET /coverage responde 503 explicando por
-    # que, en vez de quedarse colgado contra un DSN que no conecta.
-    database_url_web: str = Field(
-        default="", description="DSN de PostgreSQL para datos publicos deterministas"
-    )
+    # Obligatorio: el rol mira_web ya existe en produccion (creado 2026-08-20).
+    # Estuvo temporalmente opcional mientras no existia, para que una
+    # funcionalidad sin aprovisionar no impidiera arrancar el servicio entero.
+    # Ese motivo ya no aplica, y fallar al arrancar es mejor que fallar a mitad
+    # de una peticion.
+    database_url_web: str = Field(description="DSN de PostgreSQL para datos publicos deterministas")
     # Rol minimo de escritura, solo para el esquema analytics (mira_logger).
     database_url_log: str = Field(description="DSN de PostgreSQL para el registro de auditoria")
 

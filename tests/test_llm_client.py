@@ -15,12 +15,12 @@ def _has_real_credentials() -> bool:
         settings = get_settings()
     except Exception:
         return False
-    return bool(settings.anthropic_api_key) and bool(settings.database_url)
+    return bool(settings.anthropic_api_key) and bool(settings.database_url_query)
 
 
 pytestmark = pytest.mark.skipif(
     not _has_real_credentials(),
-    reason="requiere ANTHROPIC_API_KEY y DATABASE_URL reales -- prueba de integracion",
+    reason="requiere ANTHROPIC_API_KEY y DATABASE_URL_QUERY reales -- prueba de integracion",
 )
 
 

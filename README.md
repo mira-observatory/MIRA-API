@@ -72,7 +72,7 @@ Solo tres etapas involucran al modelo de IA, y ninguna de ellas toca un numero.
 
 ## Portabilidad
 
-El servicio se conecta a un PostgreSQL estandar mediante `DATABASE_URL`. Hoy ese
+El servicio se conecta a un PostgreSQL estandar mediante `DATABASE_URL_QUERY`. Hoy ese
 PostgreSQL esta alojado en Supabase; **no se usa ninguna funcionalidad propia de
 Supabase** (ni PostgREST, ni auth, ni RLS como autorizacion de la aplicacion). El
 dia de la migracion cambia el valor de una variable de entorno.
@@ -102,6 +102,26 @@ Uvicorn:
 
 ```bash
 HOST=0.0.0.0 PORT=8080 ./scripts/run.sh --log-level debug
+```
+
+En Windows PowerShell, usa los scripts equivalentes:
+
+```powershell
+.\scripts\install.ps1
+```
+
+Completa las credenciales de `.env` y arranca el servidor con:
+
+```powershell
+.\scripts\run.ps1
+```
+
+Para cambiar el host, el puerto o pasar argumentos adicionales a Uvicorn:
+
+```powershell
+$env:HOST = "0.0.0.0"
+$env:PORT = "8080"
+.\scripts\run.ps1 --log-level debug
 ```
 
 Pruebas y calidad:
@@ -165,7 +185,7 @@ Las tres conexiones del servicio tienen privilegios separados:
 
 | Variable | Rol | Acceso |
 |---|---|---|
-| `DATABASE_URL` | `mira_query` | Vistas permitidas de `query` para NLQ |
+| `DATABASE_URL_QUERY` | `mira_query` | Vistas permitidas de `query` para NLQ |
 | `DATABASE_URL_WEB` | `mira_web` | `web.coverage_sources` |
 | `DATABASE_URL_LOG` | `mira_logger` | Escritura de auditoria en `analytics` |
 

@@ -7,7 +7,7 @@ SRC = Path(__file__).resolve().parent.parent / "src" / "mira_api"
 
 #: Unica frontera que puede hablar con el driver de PostgreSQL. El resto del
 #: servicio pasa SQL ya validado a `db.executor.ReadOnlyExecutor` y nunca ve una
-#: conexion; asi migrar de proveedor es cambiar `DATABASE_URL`, no reescribir codigo.
+#: conexion; asi migrar de proveedor es cambiar `DATABASE_URL_QUERY`, no reescribir codigo.
 ALLOWED_DIR = SRC / "db"
 
 

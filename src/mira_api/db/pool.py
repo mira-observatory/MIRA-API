@@ -35,7 +35,7 @@ def build_read_pool(settings: Settings) -> AsyncConnectionPool:
     """Pool de lectura. Es la unica puerta del servicio hacia los datos."""
     options = _READ_ONLY_OPTIONS.format(timeout=settings.statement_timeout_ms)
     return AsyncConnectionPool(
-        conninfo=_with_options(settings.database_url, options),
+        conninfo=_with_options(settings.database_url_query, options),
         min_size=settings.pool_min_size,
         max_size=settings.pool_max_size,
         timeout=settings.pool_timeout_s,
