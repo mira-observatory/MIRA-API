@@ -69,19 +69,34 @@ nunca importa `psycopg`.
 
 ## Desarrollo
 
+En macOS o Linux, instala el proyecto y sus dependencias de desarrollo con:
+
 ```bash
-python -m venv .venv
-.venv/Scripts/pip install -e ".[dev]"
-cp .env.example .env      # y completa los valores
-.venv/Scripts/uvicorn mira_api.main:app --reload
+./scripts/install.sh
+```
+
+El instalador crea `.venv`, instala el paquete y crea `.env` desde
+`.env.example` si todavía no existe. Completa las credenciales de `.env` y
+arranca el servidor con:
+
+```bash
+./scripts/run.sh
+```
+
+Por defecto escucha en `http://127.0.0.1:8000` con recarga automática. El host
+y el puerto se pueden configurar, y los argumentos adicionales se pasan a
+Uvicorn:
+
+```bash
+HOST=0.0.0.0 PORT=8080 ./scripts/run.sh --log-level debug
 ```
 
 Pruebas y calidad:
 
 ```bash
-.venv/Scripts/pytest
-.venv/Scripts/ruff check src tests
-.venv/Scripts/mypy
+.venv/bin/pytest
+.venv/bin/ruff check src tests
+.venv/bin/mypy
 ```
 
 ## Estructura
