@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from mira_api.llm.client import ClaudeClient, ClaudeRefusal
+from mira_api.llm.client import ClaudeApiError, ClaudeClient, ClaudeRefusal
 from mira_api.nlq.number_extraction import find_unverified_numbers
 from mira_api.nlq.prompts import NARRATIVE_RETRY_PROMPT, NARRATIVE_SYSTEM_PROMPT
 from mira_api.nlq.sql_generation import Usage
@@ -85,7 +85,10 @@ async def generate_narrative(
                 messages=messages,
                 max_tokens=max_tokens,
             )
-        except ClaudeRefusal:
+        except (ClaudeRefusal, ClaudeApiError):
+            # La redaccion es prescindible: los datos ya estan. Si la API se
+            # cae o se sobrecarga aqui, se sirve la plantilla determinista en
+            # vez de tumbar una respuesta que ya tiene su tabla.
             break
         usage = usage + Usage(
             input_tokens=completion.input_tokens,

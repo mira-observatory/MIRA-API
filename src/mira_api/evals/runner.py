@@ -141,21 +141,38 @@ async def run_cases(settings: Settings, cases: list[Case] | None = None) -> list
                     for turn in case.history
                 ],
             )
-            response = await run_query(
-                request,
-                client=client,
-                executor=executor,
-                log_executor=log_executor,
-                system_blocks=system_blocks,
-                model=settings.sql_model,
-                narrative_model=settings.model_fast,
-                max_rows=settings.max_rows,
-                budget_daily_usd=settings.budget_daily_usd,
-                budget_monthly_usd=settings.budget_monthly_usd,
-                subject_key=EVAL_SUBJECT,
-                prompt_version=settings.prompt_version,
-                app_version=settings.app_version,
-            )
+            try:
+                response = await run_query(
+                    request,
+                    client=client,
+                    executor=executor,
+                    log_executor=log_executor,
+                    system_blocks=system_blocks,
+                    model=settings.sql_model,
+                    narrative_model=settings.model_fast,
+                    max_rows=settings.max_rows,
+                    budget_daily_usd=settings.budget_daily_usd,
+                    budget_monthly_usd=settings.budget_monthly_usd,
+                    subject_key=EVAL_SUBJECT,
+                    prompt_version=settings.prompt_version,
+                    app_version=settings.app_version,
+                )
+            except Exception as err:  # noqa: BLE001 - un caso caido no tumba la corrida
+                # Sin esto, un 529 transitorio de la API en el caso 3 tiraba la
+                # corrida entera y se perdia lo que ya habian dicho los casos
+                # 1 y 2. Cada caso cuesta dinero: no se descartan resultados
+                # que ya se pagaron.
+                results.append(
+                    CaseResult(
+                        case=case,
+                        ok=False,
+                        failures=[f"la consulta fallo: {type(err).__name__}: {err}"],
+                        outcome="EXCEPCION",
+                        row_count=0,
+                        sql=None,
+                    )
+                )
+                continue
             results.append(evaluate(case, response, max_rows=settings.max_rows))
         await wait_for_audit_tasks()
         return results

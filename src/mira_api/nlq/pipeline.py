@@ -12,7 +12,7 @@ from mira_api.audit.outcomes import Outcome
 from mira_api.audit.writer import QueryLogRecord, write_audit_log
 from mira_api.db.executor import DatabaseError, QueryTimeout, ReadOnlyExecutor
 from mira_api.db.log_executor import LogExecutor
-from mira_api.llm.client import ClaudeClient, ClaudeRefusal
+from mira_api.llm.client import ClaudeApiError, ClaudeClient, ClaudeRefusal
 from mira_api.nlq.narrative import generate_narrative
 from mira_api.nlq.sql_generation import (
     GenerationAttempt,
@@ -268,7 +268,11 @@ async def run_query(
             countries_filter=countries,
             timings_ms=timings_ms,
         )
-    except ClaudeRefusal:
+    except (ClaudeRefusal, ClaudeApiError):
+        # ClaudeApiError cubre la sobrecarga transitoria (529), el limite de
+        # tasa y los cortes de red. Sin atraparlo, un 529 -- que ocurre --
+        # salia como 500 con traza en vez del FAILED_LLM_ERROR que existe
+        # justo para esto.
         timings_ms["llm_ms"] = int((time.monotonic() - llm_start) * 1000)
         _schedule_audit_write(
             log_executor,

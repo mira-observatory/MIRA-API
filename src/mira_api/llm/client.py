@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from anthropic import AsyncAnthropic
+from anthropic import APIError, AsyncAnthropic
+
+#: Fallo de la API que no es un rechazo del modelo: sobrecarga (529), limite de
+#: tasa, corte de red, peticion mal formada. Se re-exporta aqui por el mismo
+#: motivo que db.executor re-exporta DatabaseError -- el resto del servicio no
+#: importa `anthropic`, igual que no importa `psycopg`.
+#:
+#: Sin esto, un 529 transitorio (que ocurre) salia como excepcion sin atrapar:
+#: 500 con traza en vez del FAILED_LLM_ERROR que la taxonomia tiene justo para
+#: esto.
+ClaudeApiError = APIError
 
 
 class ClaudeRefusal(Exception):
