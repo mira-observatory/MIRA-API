@@ -18,6 +18,7 @@ COPY --from=builder /install /usr/local
 
 USER mira
 WORKDIR /app
+COPY scripts ./scripts
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \

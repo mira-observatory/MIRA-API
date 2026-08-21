@@ -227,15 +227,16 @@ atribucion del registro de auditoria se pierde sin dar ningun error.
 ### Cobertura publica
 
 `GET /coverage` es un endpoint determinista respaldado por una consulta SQL
-constante sobre `web.coverage_sources`. Usa su propio pool y el rol `mira_web`;
-no invoca modelos, no consume cuota y no pasa por el validador de SQL generado.
+constante sobre `web.countries` y `web.coverage_sources`. Usa su propio pool y
+el rol `mira_web`; no invoca modelos, no consume cuota y no pasa por el
+validador de SQL generado.
 
 Las tres conexiones del servicio tienen privilegios separados:
 
 | Variable | Rol | Acceso |
 |---|---|---|
 | `DATABASE_URL_QUERY` | `mira_query` | Vistas permitidas de `query` para NLQ |
-| `DATABASE_URL_WEB` | `mira_web` | `web.coverage_sources` |
+| `DATABASE_URL_WEB` | `mira_web` | `web.countries`, `web.coverage_sources` |
 | `DATABASE_URL_LOG` | `mira_logger` | Escritura de auditoria en `analytics` |
 
 ## Lo que este repositorio nunca hace

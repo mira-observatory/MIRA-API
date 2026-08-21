@@ -15,6 +15,8 @@ def _row(
     return {
         "source_key": source_key,
         "country_code": country_code,
+        "country_name": country_code,
+        "flag_asset": f"/flags/{country_code.lower()}.svg",
         "source_system": source_key,
         "display_name": source_key,
         "status": status,
@@ -49,8 +51,23 @@ def test_builds_summary_and_country_breakdown() -> None:
     assert result.summary.process_count == 15
     assert result.summary.coverage_from == date(2021, 1, 1)
     assert len(result.countries) == 2
+    assert result.countries[0].country_name == "CR"
+    assert result.countries[0].flag_asset == "/flags/cr.svg"
     assert result.countries[0].process_count == 15
     assert result.countries[1].status == "PLANNED"
+
+
+def test_builds_planned_country_without_sources() -> None:
+    row = _row("pa_planned", "PA", "PLANNED")
+    row["source_key"] = None
+    row["status"] = None
+    row["country_name"] = "Panama"
+
+    result = build_coverage_response([row])
+
+    assert result.summary.planned_countries == 1
+    assert result.countries[0].country_name == "Panama"
+    assert result.countries[0].sources == []
 
 
 def test_handles_empty_coverage() -> None:
@@ -64,5 +81,6 @@ def test_handles_empty_coverage() -> None:
 
 def test_uses_constant_public_sql_outside_query_schema() -> None:
     assert "web.coverage_sources" in COVERAGE_SQL
+    assert "web.countries" in COVERAGE_SQL
     assert "query." not in COVERAGE_SQL
     assert "mart." not in COVERAGE_SQL

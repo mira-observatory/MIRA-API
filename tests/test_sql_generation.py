@@ -6,6 +6,7 @@ import pytest
 
 from mira_api.audit.outcomes import Outcome
 from mira_api.llm.client import Completion
+from mira_api.nlq.prompts import SQL_SYSTEM_PROMPT
 from mira_api.nlq.sql_generation import (
     GenerationFailed,
     OutOfScope,
@@ -60,6 +61,12 @@ def test_build_system_blocks_marca_cache_control() -> None:
     blocks = build_system_blocks([])
     assert len(blocks) == 1
     assert blocks[0]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_prompt_indica_que_compras_y_gasto_usan_awards() -> None:
+    assert "compras, gasto, adjudicaciones" in SQL_SYSTEM_PROMPT
+    assert "une query.v_process con query.v_awards usando process_id" in SQL_SYSTEM_PROMPT
+    assert "estimated_amount es solo presupuesto estimado" in SQL_SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio

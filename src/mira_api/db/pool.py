@@ -56,18 +56,15 @@ def build_log_pool(settings: Settings) -> AsyncConnectionPool:
     """Pool para analytics.*, separado del de lectura -- si el registro se
     satura o falla, las consultas de los usuarios no deben verse afectadas.
 
-    Ya no es "minimo": desde que existe el presupuesto global (Hito 5), CADA
-    consulta lo toca varias veces (2 lecturas de check_budget + 2 escrituras
-    de record_global_spend), no solo ocasionalmente para auditoria -- un
-    max_size de 2 no aguanta trafico concurrente real (verificado: 100
-    peticiones simultaneas agotaban el pool). Timeout corto (3s): un contador
-    de cuota lento no debe alargar la respuesta al usuario.
+    En Supabase Nano no debe abrir conexiones durante el startup: el diccionario
+    semantico solo necesita el pool de lectura. Se configura con min_size=0 por
+    defecto y abre conexiones bajo demanda.
     """
     return AsyncConnectionPool(
         conninfo=_with_options(settings.database_url_log, _LOG_OPTIONS),
-        min_size=2,
-        max_size=10,
-        timeout=5.0,
+        min_size=settings.log_pool_min_size,
+        max_size=settings.log_pool_max_size,
+        timeout=settings.pool_timeout_s,
         max_waiting=200,
         max_lifetime=1800,
         open=False,
@@ -78,7 +75,7 @@ def build_web_pool(settings: Settings) -> AsyncConnectionPool:
     """Pool aislado para endpoints publicos respaldados por SQL fijo."""
     return AsyncConnectionPool(
         conninfo=_with_options(settings.database_url_web, _WEB_READ_ONLY_OPTIONS),
-        min_size=1,
+        min_size=settings.web_pool_min_size,
         max_size=settings.web_pool_max_size,
         timeout=settings.pool_timeout_s,
         max_waiting=32,

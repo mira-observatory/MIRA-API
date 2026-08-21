@@ -31,10 +31,15 @@ class Settings(BaseSettings):
     # Rol minimo de escritura, solo para el esquema analytics (mira_logger).
     database_url_log: str = Field(description="DSN de PostgreSQL para el registro de auditoria")
 
-    pool_min_size: int = 2
-    pool_max_size: int = 8
-    pool_timeout_s: float = 5.0
-    web_pool_max_size: int = 4
+    # Supabase Nano tiene un pool compartido pequeno. Estos defaults evitan que
+    # el servicio reserve conexiones de auditoria/cobertura antes de recibir trafico.
+    pool_min_size: int = 1
+    pool_max_size: int = 4
+    pool_timeout_s: float = 15.0
+    log_pool_min_size: int = 0
+    log_pool_max_size: int = 4
+    web_pool_min_size: int = 0
+    web_pool_max_size: int = 2
     statement_timeout_ms: int = 8000
 
     # --- modelo de lenguaje ------------------------------------------------
