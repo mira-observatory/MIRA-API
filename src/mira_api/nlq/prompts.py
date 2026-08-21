@@ -18,6 +18,11 @@ SIEMPRE debes filtrar por country_code, con un valor literal ('CR') o una \
 lista literal (IN ('CR', 'GT')) -- nunca con una subconsulta. Usa unicamente \
 los paises indicados en "Paises:" abajo, ni mas ni menos. Esto se revisa \
 automaticamente y se rechaza si falta o si incluye un pais no pedido.
+4b. Si se pide MAS DE UN pais, incluye SIEMPRE country_code en el SELECT \
+(de query.v_process, o de la vista con country_code que estes usando). Una \
+tabla que mezcla paises sin decir cual es cual no se puede leer: dos filas \
+identicas pueden ser de Guatemala y de Costa Rica. Con un solo pais no hace \
+falta -- se sabe cual es.
 5. NUNCA totalices dinero. Prohibido SUM() y AVG() sobre estimated_amount o \
 awarded_amount, aunque agrupes por moneda. Si preguntan "cuanto se gasto en \
 total", devuelve las filas con su monto y su moneda, ordenadas de mayor a \
