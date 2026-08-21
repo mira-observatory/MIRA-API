@@ -119,6 +119,74 @@ def _schedule_audit_write(
     task.add_done_callback(_on_audit_task_done)
 
 
+def mixed_currency_warning(
+    columns: list[Column],
+    rows: list[dict[str, object]],
+    requested_countries: list[str],
+) -> Warning | None:
+    """Avisa cuando una tabla de montos no se puede leer como comparacion.
+
+    Los montos de paises distintos vienen en monedas distintas, y no hay tasa
+    de cambio en el modelo de datos. Convertir con una inventada seria peor que
+    no comparar. Asi que cualquier ranking por monto que cruce paises miente,
+    de una de dos formas -- verificadas con datos reales el 2026-08-21 pidiendo
+    "las 10 adjudicaciones mas caras" de Costa Rica y Guatemala:
+
+    1. Ordenando por el monto suelto: salen diez contratos costarricenses y
+       cero guatemaltecos. No porque los de Guatemala sean chicos, sino porque
+       un quetzal vale unos 65 colones, asi que Q3,900,000 (unos 253 millones
+       de colones, un contrato grande) queda debajo de cualquier monto en
+       colones como numero.
+    2. Ordenando por moneda y luego por monto: peor todavia, porque CRC va
+       antes que GTQ alfabeticamente y el LIMIT corta antes de llegar a
+       Guatemala. Un sesgo perfectamente sistematico.
+
+    En los dos casos la tabla se ve normal y quien la lee no tiene como saber
+    que falta un pais entero. Por eso el aviso mira el resultado, no el SQL: da
+    igual como se ordeno, lo que importa es si lo que llego representa lo que
+    se pregunto.
+    """
+    if not any(column.kind == "money" for column in columns):
+        return None
+
+    monedas = sorted(
+        {str(row["currency_code"]) for row in rows if isinstance(row.get("currency_code"), str)}
+    )
+    presentes = {
+        str(row["country_code"]).upper() for row in rows if isinstance(row.get("country_code"), str)
+    }
+    pedidos = {c.upper() for c in requested_countries}
+    faltantes = sorted(pedidos - presentes) if presentes else []
+
+    if len(monedas) >= 2:
+        return Warning(
+            code="MIXED_CURRENCY",
+            message_es=(
+                f"La tabla mezcla montos en {', '.join(monedas)}, y no son comparables "
+                "entre si: no hay tasa de cambio en los datos. Si esta ordenada por "
+                "monto, el orden refleja el numero, no el valor. Conviene preguntar "
+                "por un pais a la vez."
+            ),
+            details={"monedas": monedas},
+        )
+
+    if len(pedidos) >= 2 and faltantes:
+        return Warning(
+            code="MIXED_CURRENCY",
+            message_es=(
+                f"Se preguntaron varios paises pero la tabla solo trae datos de "
+                f"{', '.join(sorted(presentes))}: no aparece {', '.join(faltantes)}. "
+                "Los montos de cada pais estan en su propia moneda y no hay tasa de "
+                "cambio en los datos, asi que un ranking por monto entre paises deja "
+                "fuera a los de moneda mas fuerte. Conviene preguntar por un pais a "
+                "la vez."
+            ),
+            details={"paises_ausentes": faltantes, "paises_presentes": sorted(presentes)},
+        )
+
+    return None
+
+
 async def _charge_global_budget(
     log_executor: LogExecutor, *, model: str, usage: Usage
 ) -> float:
@@ -362,12 +430,20 @@ async def run_query(
         )
         warnings = diagnosis.warnings
         coverage_note = diagnosis.coverage
-    elif rows_result.truncated:
+    else:
+        mezcla = mixed_currency_warning(columns, rows_result.rows, countries)
+        if mezcla is not None:
+            warnings.append(mezcla)
+
+    if rows_result.row_count > 0 and rows_result.truncated:
         # Se alcanzo el tope de filas: lo que se ve es un pedazo, y quien
         # pregunta no tiene como saberlo mirando la tabla. Decirlo importa
         # tanto como los datos -- sacar conclusiones de un pedazo creyendo
         # que es el total es el mismo error que un total mal sumado.
-        warnings = [
+        # append, no asignacion: un resultado puede estar truncado Y mezclar
+        # monedas a la vez, y pisar un aviso con el otro deja a medias la unica
+        # parte de la respuesta que dice que NO se puede concluir.
+        warnings.append(
             Warning(
                 code="TRUNCATED_RESULT",
                 message_es=(
@@ -377,7 +453,7 @@ async def run_query(
                 ),
                 details={"max_rows": rows_result.row_count},
             )
-        ]
+        )
     if warnings:
         # Se emite antes que la narrativa: el motivo del vacio, o el aviso de
         # que falta data por ver, es parte de la respuesta y no un adorno que

@@ -3,12 +3,13 @@ from __future__ import annotations
 import psycopg
 import pytest
 
-from mira_api.api.schemas import QueryRequest
+from mira_api.api.schemas import Column, QueryRequest
 from mira_api.audit.outcomes import Outcome
 from mira_api.db.executor import Rows
 from mira_api.llm.client import Completion
 from mira_api.nlq.pipeline import (
     _infer_column_kind,
+    mixed_currency_warning,
     normalise_question,
     run_query,
     wait_for_audit_tasks,
@@ -668,3 +669,79 @@ async def test_on_event_no_reporta_narrativa_si_no_se_pidio() -> None:
     )
 
     assert [e for e, _ in events] == ["sql", "row_count", "rows", "done"]
+
+
+# --- Aviso de monedas mezcladas ----------------------------------------------
+
+
+def _money_columns() -> list[Column]:
+    return [
+        Column(name="awarded_amount", kind="money", currency_code="CRC"),
+        Column(name="currency_code", kind="text"),
+    ]
+
+def test_avisa_cuando_la_tabla_mezcla_monedas() -> None:
+    """Una tabla ordenada por monto que mezcla monedas esta ordenada por
+    numero, no por valor: un quetzal vale unos 65 colones."""
+    rows = [
+        {"country_code": "CR", "awarded_amount": 15_318_000_000, "currency_code": "CRC"},
+        {"country_code": "GT", "awarded_amount": 3_900_000, "currency_code": "GTQ"},
+    ]
+
+    aviso = mixed_currency_warning(_money_columns(), rows, ["CR", "GT"])
+
+    assert aviso is not None
+    assert aviso.code == "MIXED_CURRENCY"
+    assert "CRC" in aviso.message_es and "GTQ" in aviso.message_es
+    assert "no son comparables" in aviso.message_es
+    assert aviso.details["monedas"] == ["CRC", "GTQ"]
+
+
+def test_avisa_cuando_un_pais_pedido_no_aparece_en_el_ranking() -> None:
+    """El caso real (2026-08-21): se pidieron las 10 adjudicaciones mas caras
+    de Costa Rica y Guatemala y volvieron diez costarricenses, cero
+    guatemaltecas. La tabla se ve perfectamente normal -- una sola moneda,
+    nada raro -- y por eso es peor: quien la lee no tiene como notar que falta
+    un pais entero."""
+    rows = [
+        {"country_code": "CR", "awarded_amount": 15_318_000_000, "currency_code": "CRC"},
+        {"country_code": "CR", "awarded_amount": 11_488_500_000, "currency_code": "CRC"},
+    ]
+
+    aviso = mixed_currency_warning(_money_columns(), rows, ["CR", "GT"])
+
+    assert aviso is not None
+    assert aviso.code == "MIXED_CURRENCY"
+    assert "GT" in aviso.message_es
+    assert aviso.details["paises_ausentes"] == ["GT"]
+
+
+def test_sin_aviso_con_una_sola_moneda_y_un_solo_pais_pedido() -> None:
+    """Inventar una advertencia donde no hace falta gasta la atencion de quien
+    lee, y la proxima ya no la mira."""
+    rows = [
+        {"country_code": "CR", "awarded_amount": 15_318_000_000, "currency_code": "CRC"},
+        {"country_code": "CR", "awarded_amount": 11_488_500_000, "currency_code": "CRC"},
+    ]
+
+    assert mixed_currency_warning(_money_columns(), rows, ["CR"]) is None
+
+
+def test_sin_aviso_si_todos_los_paises_pedidos_aparecen() -> None:
+    """Dos paises, una sola moneda (montos ya normalizados o un pais sin
+    adjudicaciones propias): no hay nada que aclarar."""
+    rows = [
+        {"country_code": "CR", "awarded_amount": 900, "currency_code": "CRC"},
+        {"country_code": "GT", "awarded_amount": 800, "currency_code": "CRC"},
+    ]
+
+    assert mixed_currency_warning(_money_columns(), rows, ["CR", "GT"]) is None
+
+
+def test_sin_aviso_si_la_tabla_no_trae_montos() -> None:
+    """Un conteo por pais no compara dinero: ahi si se pueden poner lado a
+    lado sin mentir."""
+    columns = [Column(name="country_code", kind="text"), Column(name="count", kind="number")]
+    rows = [{"country_code": "CR", "count": 10}]
+
+    assert mixed_currency_warning(columns, rows, ["CR", "GT"]) is None
