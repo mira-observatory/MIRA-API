@@ -83,6 +83,8 @@ class ValidatedSql:
     sql: str
     relations: frozenset[str]
     limit_injected: bool
+    #: Si hubo que agregar NULLS LAST a algun ORDER BY descendente.
+    nulls_last_injected: bool = False
 
 
 #: Vistas que traen country_code. Si el SQL las toca, tiene que filtrar por
@@ -145,10 +147,12 @@ def validate(sql: str, *, max_rows: int, countries: list[str]) -> ValidatedSql:
         _check_country_scope(tree, countries)
 
     limit_injected = _enforce_limit(tree, max_rows)
+    nulls_last_injected = _enforce_nulls_last(tree)
     return ValidatedSql(
         sql=tree.sql(dialect="postgres"),
         relations=frozenset(relations),
         limit_injected=limit_injected,
+        nulls_last_injected=nulls_last_injected,
     )
 
 
@@ -272,6 +276,28 @@ def _literal_values(node: exp.Expression) -> set[str]:
     if isinstance(node, exp.Paren):
         return _literal_values(node.this)
     return set()
+
+
+def _enforce_nulls_last(tree: exp.Expression) -> bool:
+    """Fuerza NULLS LAST en todo ORDER BY descendente.
+
+    PostgreSQL ordena los nulos ARRIBA en un DESC. Verificado en produccion
+    el 2026-08-21: "los 6 procesos mas recientes" con ORDER BY
+    publication_date DESC devolvio seis filas sin fecha ninguna. No fallo
+    nada -- la respuesta traia seis procesos reales, con su id y su titulo,
+    y quien la leyera no tenia como saber que no eran los mas recientes sino
+    justo los que no tienen el dato.
+
+    Se impone en el arbol, como el LIMIT, en vez de solo pedirselo al prompt:
+    el prompt lo cumple casi siempre, y "casi siempre" en una respuesta que
+    se ve bien equivocada es peor que un error visible.
+    """
+    corregidos = False
+    for orden in tree.find_all(exp.Ordered):
+        if orden.args.get("desc") and orden.args.get("nulls_first") is not False:
+            orden.set("nulls_first", False)
+            corregidos = True
+    return corregidos
 
 
 def _enforce_limit(tree: exp.Select, max_rows: int) -> bool:

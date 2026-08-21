@@ -244,3 +244,71 @@ def test_el_rechazo_explica_que_hacer_en_su_lugar() -> None:
 
     assert "fila por fila" in err.value.detail
     assert "moneda" in err.value.detail
+
+
+# --- NULLS LAST forzado (bug real, 2026-08-21) -------------------------------
+
+
+def test_agrega_nulls_last_a_un_order_by_descendente() -> None:
+    """PostgreSQL pone los nulos ARRIBA en un DESC. "Los 6 procesos mas
+    recientes" devolvia seis filas sin fecha: seis procesos reales, con id y
+    titulo, que no eran los mas recientes sino justo los que no tienen el
+    dato. Nada fallaba, y por eso era grave."""
+    sql = (
+        "select process_id, publication_date from query.v_process "
+        "where country_code = 'CR' order by publication_date desc limit 6"
+    )
+
+    result = validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES)
+
+    assert result.nulls_last_injected
+    assert "NULLS LAST" in result.sql.upper()
+
+
+def test_no_toca_un_order_by_ascendente() -> None:
+    """En ASC los nulos ya van al final: agregar NULLS LAST no cambiaria nada
+    y ensuciaria el SQL que se le muestra al usuario como prueba."""
+    sql = "select process_id from query.v_process where country_code = 'CR' order by process_id"
+
+    result = validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES)
+
+    assert not result.nulls_last_injected
+
+
+def test_respeta_un_nulls_last_que_ya_venia() -> None:
+    sql = (
+        "select process_id, publication_date from query.v_process "
+        "where country_code = 'CR' order by publication_date desc nulls last"
+    )
+
+    result = validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES)
+
+    assert not result.nulls_last_injected
+    assert "NULLS LAST" in result.sql.upper()
+
+
+def test_corrige_un_nulls_first_explicito() -> None:
+    """Aunque el modelo lo pida explicito: encabezar "las mas caras" con las
+    que no tienen monto no es lo que nadie quiso preguntar."""
+    sql = (
+        "select award_id, awarded_amount from query.v_awards "
+        "order by awarded_amount desc nulls first"
+    )
+
+    result = validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES)
+
+    assert result.nulls_last_injected
+    assert "NULLS FIRST" not in result.sql.upper()
+
+
+def test_alcanza_a_varias_columnas_del_mismo_order_by() -> None:
+    sql = (
+        "select p.process_id, a.awarded_amount, p.publication_date "
+        "from query.v_process p join query.v_awards a using (process_id) "
+        "where p.country_code = 'CR' "
+        "order by a.awarded_amount desc, p.publication_date desc"
+    )
+
+    result = validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES)
+
+    assert result.sql.upper().count("NULLS LAST") == 2

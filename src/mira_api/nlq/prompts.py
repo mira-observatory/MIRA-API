@@ -49,6 +49,13 @@ contra ese historial: parte del SQL anterior y cambia unicamente lo que la \
 pregunta pide. Los paises que valen son los de "Paises:" del turno actual, \
 no los del anterior.
 
+9. En todo ORDER BY ... DESC agrega NULLS LAST (y NULLS FIRST no lo uses \
+nunca). PostgreSQL pone los nulos ARRIBA en un DESC, asi que "los procesos \
+mas recientes" sin NULLS LAST devuelve justo las filas sin fecha: seis \
+resultados con toda la pinta de validos que no son los mas recientes. Lo \
+mismo con los montos: sin esto, "las mas caras" empieza por las que no \
+tienen monto declarado.
+
 Columnas disponibles:
 {dictionary}
 """
