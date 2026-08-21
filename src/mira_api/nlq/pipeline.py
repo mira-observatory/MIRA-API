@@ -362,10 +362,27 @@ async def run_query(
         )
         warnings = diagnosis.warnings
         coverage_note = diagnosis.coverage
-        if warnings:
-            # Se emite antes que la narrativa: el motivo del vacio es la
-            # respuesta, no un adorno que llega despues.
-            _emit("warnings", {"warnings": [w.model_dump() for w in warnings]})
+    elif rows_result.truncated:
+        # Se alcanzo el tope de filas: lo que se ve es un pedazo, y quien
+        # pregunta no tiene como saberlo mirando la tabla. Decirlo importa
+        # tanto como los datos -- sacar conclusiones de un pedazo creyendo
+        # que es el total es el mismo error que un total mal sumado.
+        warnings = [
+            Warning(
+                code="TRUNCATED_RESULT",
+                message_es=(
+                    f"Se muestran {rows_result.row_count} filas, que es el maximo por "
+                    "consulta: hay mas. Para verlo completo conviene preguntar por un "
+                    "mes a la vez."
+                ),
+                details={"max_rows": rows_result.row_count},
+            )
+        ]
+    if warnings:
+        # Se emite antes que la narrativa: el motivo del vacio, o el aviso de
+        # que falta data por ver, es parte de la respuesta y no un adorno que
+        # llega despues.
+        _emit("warnings", {"warnings": [w.model_dump() for w in warnings]})
 
     narrative_text: str | None = None
     narrative_verified = False

@@ -37,7 +37,17 @@ def _build_user_message(
         "pregunta": question,
         "filas_totales": row_count,
         "truncado": truncated,
-        "filas_mostradas": sample,
+        # El nombre importa: esto es una muestra para redactar, NO lo que ve la
+        # persona. Cuando la clave se llamaba "filas_mostradas", el modelo lo
+        # leyo literal y escribio "estoy mostrando solo los primeros 25"
+        # mientras la tabla en pantalla traia las 500. Decirle al usuario que
+        # ve menos de lo que ve es tan enganoso como lo contrario.
+        "muestra_para_redactar": sample,
+        "aclaracion": (
+            f"La persona ve las {row_count} filas completas en una tabla. "
+            f"Arriba solo van {len(sample)} como muestra para que redactes; "
+            "nunca digas que se muestran unicamente esas."
+        ),
     }
     return json.dumps(payload, ensure_ascii=False, default=str)
 

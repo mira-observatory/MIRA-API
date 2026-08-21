@@ -24,15 +24,16 @@ def test_acepta_select_sobre_v_process_buyers() -> None:
 
 def test_acepta_join_entre_process_awards_y_award_suppliers() -> None:
     # "Cuanto se gasto" siempre pasa por aqui: el monto vive en v_awards, no
-    # en v_process.
+    # en v_process. Se seleccionan los montos fila por fila, no totalizados:
+    # ver la seccion de prohibicion de totalizar dinero mas abajo.
     sql = (
-        "select s.supplier_id, sum(a.awarded_amount) "
+        "select s.supplier_id, a.awarded_amount, a.currency_code "
         "from query.v_process p "
         "join query.v_awards a using (process_id) "
         "join query.v_award_suppliers asup on asup.award_id = a.award_id "
         "join query.v_suppliers s on s.supplier_id = asup.supplier_id "
         "where p.country_code = 'CR' "
-        "group by s.supplier_id"
+        "order by a.awarded_amount desc"
     )
     result = validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES)
     expected = {"query.v_process", "query.v_awards", "query.v_award_suppliers", "query.v_suppliers"}
@@ -185,3 +186,61 @@ def test_no_exige_filtro_de_pais_si_no_toca_vistas_con_country_code() -> None:
     sql = "select award_id, awarded_amount from query.v_awards"
     result = validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES)
     assert "query.v_awards" in result.relations
+
+
+# --- Prohibicion de totalizar dinero (decision de producto, 2026-08-21) -------
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "select sum(awarded_amount) from query.v_awards",
+        "select avg(awarded_amount) from query.v_awards",
+        "select sum(estimated_amount) from query.v_process where country_code = 'CR'",
+        # Agrupar por moneda tampoco alcanza: sigue siendo un total calculado.
+        "select currency_code, sum(awarded_amount) from query.v_awards group by 1",
+        # Ni escondido en una expresion.
+        "select sum(a.awarded_amount * 2) from query.v_awards a",
+    ],
+)
+def test_rechaza_totalizar_dinero(sql: str) -> None:
+    """Un total equivocado es peor que ningun total: se ve autoritativo, se
+    cita, y nadie lo vuelve a revisar. Ademas los montos vienen en monedas
+    distintas, asi que un SUM() suma colones con dolares."""
+    with pytest.raises(SqlRejected) as err:
+        validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES)
+
+    assert err.value.outcome is Outcome.REJECTED_SQL_FUNCTION
+    assert err.value.rule == "money_aggregation"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # count() no calcula un monto: cuenta filas, y no se puede sumar a mano.
+        "select count(*) from query.v_process where country_code = 'CR'",
+        # min/max devuelven un valor que SI existe en los datos, no uno calculado:
+        # "la adjudicacion mas cara" tiene que seguir andando.
+        "select max(awarded_amount) from query.v_awards",
+        "select min(awarded_amount) from query.v_awards",
+        # Mostrar los montos fila por fila es justamente lo que se quiere.
+        "select award_id, awarded_amount, currency_code from query.v_awards"
+        " order by awarded_amount desc",
+    ],
+)
+def test_permite_contar_y_mostrar_montos(sql: str) -> None:
+    assert validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES).sql
+
+
+def test_el_rechazo_explica_que_hacer_en_su_lugar() -> None:
+    """El detalle vuelve al modelo en el reintento, asi que tiene que decir
+    como corregirlo, no solo que esta mal."""
+    with pytest.raises(SqlRejected) as err:
+        validate(
+            "select sum(awarded_amount) from query.v_awards",
+            max_rows=MAX_ROWS,
+            countries=COUNTRIES,
+        )
+
+    assert "fila por fila" in err.value.detail
+    assert "moneda" in err.value.detail

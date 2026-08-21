@@ -139,6 +139,8 @@ def validate(sql: str, *, max_rows: int, countries: list[str]) -> ValidatedSql:
         if name in FORBIDDEN_FUNCTIONS:
             raise SqlRejected(Outcome.REJECTED_SQL_FUNCTION, "forbidden_function", name)
 
+    _check_no_money_aggregation(tree)
+
     if relations & _COUNTRY_SCOPED_VIEWS:
         _check_country_scope(tree, countries)
 
@@ -148,6 +150,43 @@ def validate(sql: str, *, max_rows: int, countries: list[str]) -> ValidatedSql:
         relations=frozenset(relations),
         limit_injected=limit_injected,
     )
+
+
+#: Columnas de dinero. No hay una columna de monto unificada, y es a proposito:
+#: cada monto viene con su moneda al lado.
+_MONEY_COLUMNS = frozenset({"awarded_amount", "estimated_amount"})
+
+#: Agregaciones que producen un numero que no existe en ningun renglon.
+#: MIN y MAX quedan fuera a proposito: devuelven un valor que si esta en los
+#: datos, no uno calculado, asi que "la adjudicacion mas cara" sigue andando.
+_MONEY_AGGREGATES = (exp.Sum, exp.Avg)
+
+
+def _check_no_money_aggregation(tree: exp.Expression) -> None:
+    """Prohibe sumar o promediar dinero (decision de producto, 2026-08-21).
+
+    Un total equivocado es peor que ningun total: se ve autoritativo, se cita,
+    y nadie lo vuelve a revisar. Y aqui las sumas son especialmente
+    traicioneras porque los montos vienen en monedas distintas -- Costa Rica
+    mezcla CRC, USD y EUR en la misma tabla, asi que un SUM() sin cuidado
+    suma colones con dolares y produce una cifra sin significado.
+
+    La regla vive en el prompt tambien, pero un prompt es un ruego: el modelo
+    puede ignorarlo. Esto es lo que lo hace imposible. Al rechazarse, el
+    reintento le devuelve el motivo y el modelo genera la consulta sin la
+    suma, mostrando las filas para que la persona sume si quiere.
+    """
+    for tipo in _MONEY_AGGREGATES:
+        for agregacion in tree.find_all(tipo):
+            for columna in agregacion.find_all(exp.Column):
+                if columna.name.lower() in _MONEY_COLUMNS:
+                    raise SqlRejected(
+                        Outcome.REJECTED_SQL_FUNCTION,
+                        "money_aggregation",
+                        f"no se puede {tipo.__name__.upper()}({columna.name}): los montos se "
+                        "muestran fila por fila, sin totalizar. Devuelve las filas con su "
+                        "monto y su moneda.",
+                    )
 
 
 def _collect_relations(tree: exp.Expression) -> set[str]:
