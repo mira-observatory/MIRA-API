@@ -44,11 +44,34 @@ def test_rechaza_un_valor_que_el_navegador_no_entiende(
         _settings(monkeypatch, COOKIE_SAMESITE="siempre")
 
 
-def test_fly_toml_fija_none(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_el_blueprint_de_render_fija_none() -> None:
     """El despliegue real deja el front y la API en dominios distintos. Si
-    alguien quita esta linea de fly.toml, la cookie deja de viajar y no hay
-    ningun sintoma visible."""
+    alguien quita esta variable de render.yaml, la cookie deja de viajar y no
+    hay ningun sintoma visible: ni error, ni log, solo atribucion perdida."""
     from pathlib import Path
 
-    fly = Path(__file__).resolve().parent.parent / "fly.toml"
-    assert 'COOKIE_SAMESITE = "none"' in fly.read_text(encoding="utf-8")
+    blueprint = Path(__file__).resolve().parent.parent / "render.yaml"
+    contenido = blueprint.read_text(encoding="utf-8")
+    assert "COOKIE_SAMESITE" in contenido
+    assert "value: none" in contenido
+
+
+def test_el_blueprint_no_trae_ningun_secreto() -> None:
+    """render.yaml se commitea. Los valores sensibles van marcados
+    `sync: false` y se cargan en el panel de Render; si alguno apareciera con
+    `value:`, seria una credencial en el repositorio."""
+    from pathlib import Path
+
+    blueprint = Path(__file__).resolve().parent.parent / "render.yaml"
+    lineas = blueprint.read_text(encoding="utf-8").splitlines()
+
+    secretos = (
+        "DATABASE_URL_QUERY",
+        "DATABASE_URL_WEB",
+        "DATABASE_URL_LOG",
+        "ANTHROPIC_API_KEY",
+        "TOKEN_HMAC_SECRET",
+    )
+    for nombre in secretos:
+        i = next(i for i, line in enumerate(lineas) if nombre in line)
+        assert "sync: false" in lineas[i + 1], f"{nombre} deberia cargarse en el panel"

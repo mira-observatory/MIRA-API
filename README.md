@@ -166,29 +166,35 @@ en `src/mira_api/evals/cases.py`.
 
 ## Despliegue
 
-El `Dockerfile` define como se construye y `fly.toml` como corre. **Ninguna
-credencial vive en el repositorio**: los secretos se cargan aparte y Fly los
-inyecta como variables de entorno.
+El `Dockerfile` define como se construye y `render.yaml` como corre. **Ninguna
+credencial vive en el repositorio**: los secretos van marcados `sync: false`,
+que le dice a Render que ese valor se carga a mano en el panel.
+
+1. En Render: **New > Blueprint**, apuntando a este repositorio. Lee el
+   `render.yaml` y crea el servicio.
+2. En **Environment**, cargar los seis valores marcados `sync: false`:
+
+   | Variable | Valor |
+   |---|---|
+   | `DATABASE_URL_QUERY` | DSN del rol `mira_query` |
+   | `DATABASE_URL_WEB` | DSN del rol `mira_web` |
+   | `DATABASE_URL_LOG` | DSN del rol `mira_logger` |
+   | `ANTHROPIC_API_KEY` | La clave de Anthropic |
+   | `TOKEN_HMAC_SECRET` | `openssl rand -hex 32` |
+   | `CORS_ORIGINS` | La URL exacta del front, sin barra final |
+
+3. Deploy.
+
+Despues, la misma verificacion de siempre apuntando al servicio remoto:
 
 ```bash
-fly launch --no-deploy          # solo la primera vez; reusa el fly.toml
-fly secrets set \
-  DATABASE_URL_QUERY="postgresql://mira_query...:...@...?sslmode=require" \
-  DATABASE_URL_WEB="postgresql://mira_web...:...@...?sslmode=require" \
-  DATABASE_URL_LOG="postgresql://mira_logger...:...@...?sslmode=require" \
-  ANTHROPIC_API_KEY="sk-ant-..." \
-  TOKEN_HMAC_SECRET="$(openssl rand -hex 32)" \
-  CORS_ORIGINS="https://<dominio-del-front>"
-fly deploy
+curl https://<servicio>.onrender.com/healthz
+curl https://<servicio>.onrender.com/coverage
 ```
 
-Despues de desplegar, la misma verificacion de siempre, apuntando al servicio
-remoto en vez de a localhost:
-
-```bash
-curl https://<app>.fly.dev/healthz
-curl https://<app>.fly.dev/coverage
-```
+El plan gratuito apaga el servicio sin trafico, y la primera peticion tarda
+cerca de un minuto en despertarlo. No es un error: la segunda ya responde
+normal.
 
 ### Tres cosas que rompen el despliegue si se pasan por alto
 
@@ -197,26 +203,15 @@ es `http://localhost:5173`. Sin cambiarlo, el navegador bloquea cada peticion
 y el chat no responde nada.
 
 **`VITE_API_BASE_URL` se congela al construir, no al servir.** Vite lo incrusta
-en el paquete, asi que hay que fijarlo *antes* de `npm run build`; cambiarlo
-despues en el host no tiene ningun efecto:
-
-```bash
-VITE_API_BASE_URL=https://<app>.fly.dev npm run build
-```
+dentro del paquete de JavaScript, asi que Render tiene que tenerlo cargado
+*antes* de construir el front; cambiarlo despues no hace nada hasta el
+siguiente build. Si el chat dice "hubo un error consultando los datos" recien
+desplegado, esto es lo primero a revisar.
 
 **`COOKIE_SAMESITE=none` cuando el front y la API estan en dominios distintos.**
-Ya viene puesto en `fly.toml`. Con el valor de desarrollo (`lax`) el navegador
-no reenvia la cookie anonima en una peticion cross-site, y la atribucion del
-registro de auditoria se pierde sin dar ningun error.
-
-### Antes de abrirlo al publico
-
-La cuota **por persona** esta escrita pero desactivada
-(`ENABLE_SUBJECT_QUOTA=false`, decision de producto del 2026-08-18). El
-cortacircuitos global de presupuesto si protege el gasto, pero no reparte: una
-sola persona puede agotar el presupuesto del dia y dejar el servicio mudo para
-todas las demas hasta el dia siguiente. Mientras el acceso sea conocido no
-importa; en una direccion publica, conviene activarla.
+Ya viene puesto en `render.yaml`. Con el valor de desarrollo (`lax`) el
+navegador no reenvia la cookie anonima en una peticion cross-site, y la
+atribucion del registro de auditoria se pierde sin dar ningun error.
 
 ## Estructura
 

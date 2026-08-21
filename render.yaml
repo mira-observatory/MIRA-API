@@ -1,0 +1,48 @@
+# Despliegue en Render. El Dockerfile define como se construye; esto, como corre.
+#
+# Ninguna credencial vive aqui: este archivo se commitea. Los secretos llevan
+# `sync: false`, que le dice a Render que ese valor se carga a mano en el panel
+# y nunca se lee del repositorio.
+
+services:
+  - type: web
+    name: mira-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+
+    # Oregon a proposito, aunque los usuarios esten en Centroamerica: la base
+    # de Supabase vive en us-west-2, que es esa misma region. Cada pregunta
+    # hace varios viajes a la base (presupuesto, diccionario, consulta,
+    # auditoria) y solo uno al navegador, asi que pegarse a la base gana mas
+    # de lo que pierde por acercarse al usuario.
+    region: oregon
+
+    healthCheckPath: /healthz
+
+    envVars:
+      # El front y la API quedan en dominios distintos, asi que la peticion es
+      # cross-site: con "lax" el navegador no reenvia la cookie anonima y la
+      # atribucion del registro de auditoria se pierde en silencio.
+      - key: COOKIE_SAMESITE
+        value: none
+
+      # Origen exacto del front. NUNCA "*": el servicio manda credenciales, y
+      # con comodin cualquier sitio podria usar la cookie del visitante. El
+      # validador de config lo rechaza y el servicio no arrancaria.
+      - key: CORS_ORIGINS
+        sync: false
+
+      # Los tres roles tienen privilegios distintos a proposito; ver
+      # docs/database_security.md en MIRA-ETL.
+      - key: DATABASE_URL_QUERY
+        sync: false
+      - key: DATABASE_URL_WEB
+        sync: false
+      - key: DATABASE_URL_LOG
+        sync: false
+
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: TOKEN_HMAC_SECRET
+        sync: false
