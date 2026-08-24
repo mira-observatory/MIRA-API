@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     narrative_max_rows_in_prompt: int = Field(default=25, gt=0)
     quota_per_day: int = 5
     quota_per_month: int = 15
+    #: Frena a UN cliente, distinto del presupuesto global de arriba, que frena a
+    #: TODOS por igual cuando se agota. Sin esto, un solo cliente hammering /query
+    #: podria agotar el presupuesto del dia en minutos y dejar sin servicio al
+    #: resto. 20/min es holgado para una conversacion humana y estrecho para un
+    #: script. 0 lo desactiva (para pruebas).
+    rate_limit_per_minute: int = 20
     #: Presupuesto inicial (2026-08-18): $75/mes, repartido parejo en el mes.
     budget_daily_usd: float = 2.5
     budget_monthly_usd: float = 75.0

@@ -8,10 +8,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import FastAPI, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from mira_api.api.rate_limit import IpRateLimiter, resolve_client_ip
 from mira_api.api.routes import router
 from mira_api.api.schemas import EntityCandidate, QueryRequest, QueryResponse
 from mira_api.config import get_settings
@@ -61,6 +62,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # en caliente -- coherente con que ese diccionario cambia rara vez.
         columns = await load_semantic_dictionary(app.state.executor)
         app.state.sql_system_blocks = build_system_blocks(columns)
+        app.state.rate_limiter = IpRateLimiter(limit=settings.rate_limit_per_minute)
 
         yield
     finally:
@@ -90,15 +92,23 @@ app.add_middleware(
 
 @app.middleware("http")
 async def _cabeceras_de_seguridad(http_request: Request, call_next):  # type: ignore[no-untyped-def]
-    """`nosniff` evita que el navegador adivine el tipo de una respuesta.
+    """Las mismas tres cabeceras que ya lleva el sitio estatico (render.yaml de
+    MIRA-WEB), para que la API responda igual de duro que el front que la llama.
 
-    Sin el, una respuesta JSON que empiece con algo que parezca HTML puede
-    llegar a interpretarse como tal, y ahi el contenido -- que incluye texto
-    de la pregunta de quien consulta -- pasaria a ejecutarse como pagina. Es
-    una linea y no tiene contrapartida.
+    `nosniff` evita que el navegador adivine el tipo de una respuesta. Sin el,
+    una respuesta JSON que empiece con algo que parezca HTML puede llegar a
+    interpretarse como tal, y ahi el contenido -- que incluye texto de la
+    pregunta de quien consulta -- pasaria a ejecutarse como pagina.
+
+    `X-Frame-Options` evita que un sitio ajeno incruste esta API en un iframe
+    invisible para atraer clics ("clickjacking"). No hay CSP: esto no sirve
+    HTML propio, asi que una politica de contenido no tendria nada que
+    restringir.
     """
     response = await call_next(http_request)
     response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     return response
 
 
@@ -163,7 +173,28 @@ def _resolve_subject_key_for_logging(
     return subject_key
 
 
-@app.post("/query")
+def _enforce_rate_limit(http_request: Request) -> None:
+    """Solo en las dos rutas que llaman al modelo -- /coverage, /healthz y
+    /entities/resolve no cuestan nada y no tienen por que frenarse.
+
+    Se resuelve la IP real (no la del proxy de Render) en cada llamada, no una
+    vez al arrancar: cambia con cada peticion.
+    """
+    limiter: IpRateLimiter = http_request.app.state.rate_limiter
+    ip = resolve_client_ip(
+        http_request.client.host if http_request.client else None,
+        http_request.headers.get("x-forwarded-for"),
+    )
+    resultado = limiter.check(ip or "desconocida")
+    if not resultado.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Demasiadas preguntas seguidas. Espera un momento e intenta de nuevo.",
+            headers={"Retry-After": str(int(resultado.retry_after_s) + 1)},
+        )
+
+
+@app.post("/query", dependencies=[Depends(_enforce_rate_limit)])
 async def query(
     request: QueryRequest, http_request: Request, http_response: Response
 ) -> QueryResponse:
@@ -200,7 +231,7 @@ def _format_sse(event: str, data: dict[str, object]) -> bytes:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n".encode()
 
 
-@app.post("/query/stream")
+@app.post("/query/stream", dependencies=[Depends(_enforce_rate_limit)])
 async def query_stream(
     request: QueryRequest, http_request: Request
 ) -> StreamingResponse:

@@ -28,4 +28,13 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 # inyecta PORT y falla el despliegue con "no open ports detected" si el servicio
 # no escucha justo ahi. El 8080 queda como valor por defecto para `docker run`
 # a secas y para el EXPOSE de arriba.
-CMD ["sh", "-c", "uvicorn mira_api.main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1"]
+#
+# --proxy-headers --forwarded-allow-ips='*': sin esto, request.client.host es
+# la IP del proxy de Render en TODAS las peticiones, nunca la de quien
+# pregunta -- confirmado, no habia ninguna bandera de esto antes. Rompia en
+# silencio dos cosas: la atribucion de auditoria por IP para quien llega sin
+# cookie (todo el mundo caia en el mismo balde) y volvia inutil cualquier
+# limite por IP (ver api/rate_limit.py). Confiar en '*' aqui es correcto
+# porque el contenedor no recibe trafico que no haya pasado primero por el
+# borde de Render -- no es un servidor con IP publica propia.
+CMD ["sh", "-c", "uvicorn mira_api.main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1 --proxy-headers --forwarded-allow-ips='*'"]
