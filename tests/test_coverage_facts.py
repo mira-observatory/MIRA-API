@@ -148,8 +148,13 @@ async def test_avisa_cuando_la_consulta_pide_un_periodo_fuera_de_cobertura() -> 
         }
     )
 
-    sql = "SELECT * FROM query.v_process WHERE country_code = 'GT' AND publication_date >= '2020-01-01' AND publication_date < '2021-01-01'"
-    d = await diagnose_empty_result(executor, countries=["GT"], relations=AWARDS, sql=sql)  # type: ignore[arg-type]
+    sql = (
+        "SELECT * FROM query.v_process WHERE country_code = 'GT' "
+        "AND publication_date >= '2020-01-01' AND publication_date < '2021-01-01'"
+    )
+    d = await diagnose_empty_result(
+        executor, countries=["GT"], relations=AWARDS, sql=sql  # type: ignore[arg-type]
+    )
 
     assert len(d.warnings) == 1
     aviso = d.warnings[0]

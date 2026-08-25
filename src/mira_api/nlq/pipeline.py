@@ -427,7 +427,8 @@ async def run_query(
         rows_result.row_count == 1
         and len(rows_result.rows) == 1
         and any(
-            str(k).lower() in ("count", "total", "total_procesos", "total_contratos", "num_procesos")
+            str(k).lower()
+            in ("count", "total", "total_procesos", "total_contratos", "num_procesos")
             and v == 0
             for k, v in rows_result.rows[0].items()
         )

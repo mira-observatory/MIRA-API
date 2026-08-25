@@ -185,7 +185,7 @@ async def diagnose_empty_result(
     # Revisar si la consulta filtro por un periodo fuera de rango para los paises consultados
     q_min, q_max, period_label = extract_queried_date_range(sql)
     if period_label and country_dates:
-        out_of_range_countries = []
+        out_of_range_countries: list[tuple[str, datetime.date | None, datetime.date | None]] = []
         for code in countries:
             dt_min, dt_max = country_dates.get(code, (None, None))
             if dt_min is not None and q_max is not None and q_max < dt_min:
@@ -200,7 +200,8 @@ async def diagnose_empty_result(
             )
             mensaje = (
                 f"No hay datos disponibles para el periodo consultado ({period_label}) en "
-                f"{detalles_cobertura}. El resultado en cero refleja la ausencia de datos en ese rango, no que no hayan existido contrataciones."
+                f"{detalles_cobertura}. El resultado en cero refleja la ausencia de datos "
+                "en ese rango, no que no hayan existido contrataciones."
             )
             return EmptyResultDiagnosis(
                 warnings=[
