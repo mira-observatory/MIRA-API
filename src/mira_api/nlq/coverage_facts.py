@@ -95,6 +95,14 @@ def extract_queried_date_range(
         d_max = max(dates)
         if d_min.year == d_max.year and (d_max - d_min).days >= 350:
             return d_min, d_max, str(d_min.year)
+        if (
+            d_max.year == d_min.year + 1
+            and d_min.month == 1
+            and d_min.day == 1
+            and d_max.month == 1
+            and d_max.day == 1
+        ):
+            return d_min, d_max, str(d_min.year)
         if d_min == d_max:
             return d_min, d_max, str(d_min)
         return d_min, d_max, f"{d_min} a {d_max}"
