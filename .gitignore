@@ -19,3 +19,7 @@ dist/
 !.vscode/tasks.json
 .idea/
 *.log
+
+#agentes
+.agents/*
+skills-lock.json

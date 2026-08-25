@@ -420,17 +420,30 @@ async def run_query(
     outcome = Outcome.OK_ZERO_ROWS if rows_result.row_count == 0 else Outcome.OK
 
     # Un cero nunca se entrega desnudo: se averigua si es un cero real o si
-    # simplemente esos datos no estan cargados. Solo se consulta cuando no
-    # hubo filas, asi que no le cuesta nada al camino normal.
+    # simplemente esos datos no estan cargados o el periodo esta fuera de cobertura.
     warnings: list[Warning] = []
     coverage_note: CoverageNote | None = None
-    if rows_result.row_count == 0:
+    is_zero_aggregate = (
+        rows_result.row_count == 1
+        and len(rows_result.rows) == 1
+        and any(
+            str(k).lower() in ("count", "total", "total_procesos", "total_contratos", "num_procesos")
+            and v == 0
+            for k, v in rows_result.rows[0].items()
+        )
+    )
+
+    if rows_result.row_count == 0 or is_zero_aggregate:
         diagnosis = await diagnose_empty_result(
-            executor, countries=countries, relations=result.validated.relations
+            executor,
+            countries=countries,
+            relations=result.validated.relations,
+            sql=result.validated.sql,
         )
         warnings = diagnosis.warnings
         coverage_note = diagnosis.coverage
-    else:
+
+    if rows_result.row_count > 0:
         mezcla = mixed_currency_warning(columns, rows_result.rows, countries)
         if mezcla is not None:
             warnings.append(mezcla)
@@ -474,11 +487,19 @@ async def run_query(
             truncated=rows_result.truncated,
             max_attempts=narrative_max_attempts,
             max_rows_in_prompt=narrative_max_rows_in_prompt,
-            # Con cero filas no se llama al modelo: se sirve una plantilla. Que
-            # esa plantilla explique el motivo real es la diferencia entre
-            # "no se encontraron resultados" y "Nicaragua no tiene
-            # adjudicaciones cargadas".
-            empty_reason=warnings[0].message_es if warnings else None,
+            # Con cero filas o advertencias de cobertura/periodo faltante no se llama
+            # al modelo: se sirve la explicacion exacta.
+            empty_reason=(
+                warnings[0].message_es
+                if (
+                    warnings
+                    and (
+                        rows_result.row_count == 0
+                        or warnings[0].code in ("PARTIAL_COVERAGE", "NO_DATA_FOR_PERIOD")
+                    )
+                )
+                else None
+            ),
         )
         timings_ms["narrative_ms"] = int((time.monotonic() - narrative_start) * 1000)
         await _charge_global_budget(

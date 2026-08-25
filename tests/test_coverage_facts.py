@@ -118,3 +118,45 @@ async def test_no_consulta_nada_si_la_vista_no_es_de_una_entidad_conocida() -> N
 
     assert d.warnings == []
     assert executor.consultas == []
+
+
+@pytest.mark.asyncio
+async def test_avisa_cuando_la_consulta_pide_un_periodo_fuera_de_cobertura() -> None:
+    """Caso real: Guatemala tiene datos de 2025 a 2026. Preguntar por 2020 devuelve
+    cero filas, y ese cero no significa que no hubo contrataciones en 2020 sino que
+    MIRA solo cubre 2025 a 2026."""
+    import datetime
+
+    executor = _FakeExecutor(
+        {
+            "query.v_process": [
+                {
+                    "country_code": "GT",
+                    "n": 250000,
+                    "dt_min": datetime.date(2025, 1, 2),
+                    "dt_max": datetime.date(2026, 8, 20),
+                }
+            ],
+            "query.v_awards": [
+                {
+                    "country_code": "GT",
+                    "n": 200000,
+                    "dt_min": datetime.date(2025, 1, 2),
+                    "dt_max": datetime.date(2026, 8, 20),
+                }
+            ],
+        }
+    )
+
+    sql = "SELECT * FROM query.v_process WHERE country_code = 'GT' AND publication_date >= '2020-01-01' AND publication_date < '2021-01-01'"
+    d = await diagnose_empty_result(executor, countries=["GT"], relations=AWARDS, sql=sql)  # type: ignore[arg-type]
+
+    assert len(d.warnings) == 1
+    aviso = d.warnings[0]
+    assert aviso.code == "NO_DATA_FOR_PERIOD"
+    assert "Guatemala" in aviso.message_es
+    assert "2025-01-02 a 2026-08-20" in aviso.message_es
+    assert "2020" in aviso.message_es
+    assert aviso.details["periodo_consultado"] == "2020"
+    assert aviso.details["paises_fuera_de_rango"] == ["GT"]
+
