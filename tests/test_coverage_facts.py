@@ -113,7 +113,7 @@ async def test_no_consulta_nada_si_la_vista_no_es_de_una_entidad_conocida() -> N
     d = await diagnose_empty_result(
         executor,  # type: ignore[arg-type]
         countries=["CR"],
-        relations=frozenset({"query.v_award_items"}),
+        relations=frozenset({"query.v_process_buyers"}),
     )
 
     assert d.warnings == []
@@ -165,3 +165,31 @@ async def test_avisa_cuando_la_consulta_pide_un_periodo_fuera_de_cobertura() -> 
     assert aviso.details["periodo_consultado"] == "2020"
     assert aviso.details["paises_fuera_de_rango"] == ["GT"]
 
+
+
+ITEMS = frozenset({"query.v_process", "query.v_awards", "query.v_award_items", "query.v_items"})
+
+
+@pytest.mark.asyncio
+async def test_avisa_cuando_falta_el_vinculo_item_adjudicacion() -> None:
+    """Caso real (2026-08-26): "producto mas vendido en Guatemala" dio cero
+    filas. Guatemala tiene 405,623 filas en v_items y adjudicaciones de
+    sobra, pero CERO en v_award_items -- el vinculo que dice que item cubrio
+    cada adjudicacion nunca se cargo. v_items por si sola no lo delata: hay
+    que revisar el vinculo, no el catalogo."""
+    executor = _FakeExecutor(
+        {
+            "query.v_process": [{"country_code": "GT", "n": 253852}],
+            "query.v_awards": [{"country_code": "GT", "n": 50000}],
+            "query.v_award_items": [],  # el vinculo nunca se cargo para GT
+        }
+    )
+
+    d = await diagnose_empty_result(executor, countries=["GT"], relations=ITEMS)  # type: ignore[arg-type]
+
+    assert len(d.warnings) == 1
+    aviso = d.warnings[0]
+    assert aviso.code == "PARTIAL_COVERAGE"
+    assert "productos" in aviso.message_es
+    assert "Guatemala" in aviso.message_es
+    assert aviso.details["sin_datos"] == {"productos": ["GT"]}

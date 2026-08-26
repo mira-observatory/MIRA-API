@@ -47,6 +47,7 @@ class Warning(BaseModel):
         "TRUNCATED_RESULT",
         "NULL_AMOUNTS_EXCLUDED",
         "NO_DATA_FOR_PERIOD",
+        "UNNORMALISED_ITEM_TEXT",
     ]
     message_es: str
     details: dict[str, Any] = {}

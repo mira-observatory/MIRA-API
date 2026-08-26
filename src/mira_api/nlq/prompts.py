@@ -65,9 +65,11 @@ vendido", "que se compro mas"), NUNCA unas query.v_items con query.v_awards \
 directo por process_id: un proceso puede tener varias adjudicaciones y varios \
 items, y esa union arma un producto cartesiano que infla cualquier conteo. \
 Une siempre query.v_award_items en el medio (award_id -> item_id). Para \
-nombrar el producto usa COALESCE(category_normalised, item_description): \
-category_normalised suele venir vacia. Esto se revisa automaticamente y se \
-rechaza.
+nombrar el producto usa COALESCE(category_normalised, item_description, \
+'Sin descripcion en la fuente'): category_normalised suele venir vacia, y en \
+algunos paises item_description tambien -- sin el tercer valor, esas filas \
+saldrian con la celda en blanco en vez de decir que el dato no vino. Esto se \
+revisa automaticamente y se rechaza.
 7. Si la pregunta no se puede responder con las columnas disponibles, o si \
 pide datos de un anio o periodo que esta fuera de la cobertura disponible para \
 el pais (por ejemplo Honduras en 2025 o 2026, Guatemala en 2020 a 2024, Costa \

@@ -166,6 +166,39 @@ def _schedule_audit_write(
     task.add_done_callback(_on_audit_task_done)
 
 
+def unnormalised_item_warning(relations: frozenset[str]) -> Warning | None:
+    """Avisa que el nombre de producto viene tal como lo publico la fuente,
+    sin categorizar.
+
+    Verificado contra datos reales (2026-08-26): category_normalised esta
+    vacia en el 100% de los items, en los 4 paises -- la fuente todavia no
+    trae una clasificacion normalizada de productos. Sin ella, "producto" cae
+    al texto libre de item_description, que cada portal publica distinto: en
+    Honduras, "Ver Pliego" (una etiqueta de la interfaz, no un producto)
+    aparece 6,007 veces -- mas que cualquier producto real -- porque varias
+    compras distintas usaron ese mismo texto generico en vez de describir lo
+    comprado. El numero es real (son filas que de verdad dicen eso), pero
+    agruparlas como si fueran "el mismo producto" no lo es.
+
+    No se filtra "Ver Pliego" ni ningun otro texto especifico: manana puede
+    ser otro portal con otro texto generico distinto, y adivinar cuales
+    excluir es una lista que nunca termina. Se avisa en cambio, igual que con
+    monedas mezcladas: la persona decide que tan en serio tomar el resultado.
+    """
+    if "query.v_items" not in relations:
+        return None
+    return Warning(
+        code="UNNORMALISED_ITEM_TEXT",
+        message_es=(
+            "Los nombres de producto vienen tal como los publico cada fuente, sin "
+            "categorizar todavia: pueden repetirse aunque se trate de compras "
+            "distintas -- por ejemplo, cuando la fuente usa un texto generico como "
+            '"Ver Pliego" en vez del detalle del producto -- o venir vacios. Tomalo '
+            "como una aproximacion, no como una clasificacion exacta."
+        ),
+    )
+
+
 def mixed_currency_warning(
     columns: list[Column],
     rows: list[dict[str, object]],
@@ -496,6 +529,9 @@ async def run_query(
         mezcla = mixed_currency_warning(columns, rows_result.rows, countries)
         if mezcla is not None:
             warnings.append(mezcla)
+        sin_normalizar = unnormalised_item_warning(result.validated.relations)
+        if sin_normalizar is not None:
+            warnings.append(sin_normalizar)
 
     if rows_result.row_count > 0 and rows_result.truncated:
         # Se alcanzo el tope de filas: lo que se ve es un pedazo, y quien

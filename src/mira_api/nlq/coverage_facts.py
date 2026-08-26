@@ -37,6 +37,20 @@ _ENTITY_SQL: dict[str, tuple[str, str]] = {
         "null::date as dt_min, null::date as dt_max "
         "from query.v_buyers where country_code = any(%(paises)s) group by country_code",
     ),
+    #: query.v_items por si sola no basta: Guatemala tiene 405,623 filas ahi
+    #: pero CERO en query.v_award_items (verificado 2026-08-26), asi que
+    #: "producto mas vendido" -- que necesita saber que adjudicacion cubrio
+    #: cada item -- da cero sin que sea un error de la consulta. La entidad
+    #: clave es el vinculo (v_award_items), no el catalogo de items en si.
+    "productos": (
+        "query.v_award_items",
+        "select p.country_code, count(*) as n, "
+        "null::date as dt_min, null::date as dt_max "
+        "from query.v_award_items ai "
+        "join query.v_awards a on a.award_id = ai.award_id "
+        "join query.v_process p on p.process_id = a.process_id "
+        "where p.country_code = any(%(paises)s) group by p.country_code",
+    ),
 }
 
 #: El mensaje lo lee una persona, no un sistema: "adjudicaciones de Nicaragua"

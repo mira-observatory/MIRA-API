@@ -13,6 +13,7 @@ from mira_api.nlq.pipeline import (
     mixed_currency_warning,
     normalise_question,
     run_query,
+    unnormalised_item_warning,
     wait_for_audit_tasks,
 )
 from mira_api.quota.counters import period_key
@@ -876,3 +877,27 @@ async def test_la_respuesta_final_no_trae_ids_internos() -> None:
     assert all("process_id" not in fila and "award_id" not in fila for fila in response.rows)
     # El SQL ejecutado si conserva las columnas -- es la prueba tecnica, no la tabla.
     assert "process_id" in (response.sql_executed or "")
+
+
+# --- Aviso de que el nombre de producto no viene normalizado ----------------
+
+
+def test_avisa_cuando_la_consulta_toca_v_items() -> None:
+    """Caso real (2026-08-26): category_normalised esta vacia en el 100% de
+    los items, en los 4 paises. En Honduras, "Ver Pliego" -- una etiqueta de
+    la interfaz, no un producto -- aparece 6,007 veces porque varias compras
+    distintas usaron ese mismo texto generico. El numero es real; agruparlo
+    como si fuera "el mismo producto" no lo es."""
+    aviso = unnormalised_item_warning(
+        frozenset({"query.v_process", "query.v_awards", "query.v_award_items", "query.v_items"})
+    )
+
+    assert aviso is not None
+    assert aviso.code == "UNNORMALISED_ITEM_TEXT"
+    assert "Ver Pliego" in aviso.message_es
+
+
+def test_sin_aviso_si_la_consulta_no_toca_v_items() -> None:
+    aviso = unnormalised_item_warning(frozenset({"query.v_process", "query.v_awards"}))
+
+    assert aviso is None
