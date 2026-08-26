@@ -359,3 +359,52 @@ def test_permite_comparar_montos_sin_operar_sobre_ellos() -> None:
 def test_permite_seguir_mostrando_montos_tal_cual() -> None:
     sql = "select award_id, awarded_amount, currency_code from query.v_awards"
     assert validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES).sql
+
+
+# --- Prohibicion de cruzar v_items con v_awards sin v_award_items -----------
+# (bug real, produccion, 2026-08-25: "producto mas vendido en Costa Rica"
+# conto 1,722,048 en vez de 1,317, por el join directo via process_id)
+
+
+def test_rechaza_v_items_unida_a_v_awards_sin_v_award_items() -> None:
+    sql = (
+        "select i.item_description, count(*) from query.v_process p "
+        "join query.v_awards a on a.process_id = p.process_id "
+        "join query.v_items i on i.process_id = p.process_id "
+        "where p.country_code = 'CR' group by 1"
+    )
+    with pytest.raises(SqlRejected) as err:
+        validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES)
+
+    assert err.value.outcome is Outcome.REJECTED_SQL_FUNCTION
+    assert err.value.rule == "item_award_fanout"
+    assert "v_award_items" in err.value.detail
+
+
+def test_permite_v_items_con_v_award_items_de_por_medio() -> None:
+    """El camino correcto: award_id -> item_id, sin pasar por process_id."""
+    sql = (
+        "select i.item_description, count(*) from query.v_process p "
+        "join query.v_awards a on a.process_id = p.process_id "
+        "join query.v_award_items ai on ai.award_id = a.award_id "
+        "join query.v_items i on i.item_id = ai.item_id "
+        "where p.country_code = 'CR' group by 1"
+    )
+    assert validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES).sql
+
+
+def test_permite_v_items_sola_con_v_process_sin_v_awards() -> None:
+    """v_process tiene una sola fila por proceso -- unirla a v_items por
+    process_id es un 1-a-muchos normal, no un producto cartesiano. Solo se
+    infla cuando TAMBIEN esta v_awards en el medio."""
+    sql = (
+        "select i.item_description from query.v_process p "
+        "join query.v_items i on i.process_id = p.process_id "
+        "where p.country_code = 'CR'"
+    )
+    assert validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES).sql
+
+
+def test_permite_v_awards_sola_sin_v_items() -> None:
+    sql = "select award_id, awarded_amount from query.v_awards"
+    assert validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES).sql

@@ -143,6 +143,7 @@ def validate(sql: str, *, max_rows: int, countries: list[str]) -> ValidatedSql:
 
     _check_no_money_aggregation(tree)
     _check_no_money_arithmetic(tree)
+    _check_no_item_award_fanout(relations)
 
     if relations & _COUNTRY_SCOPED_VIEWS:
         _check_country_scope(tree, countries)
@@ -227,6 +228,32 @@ def _check_no_money_aggregation(tree: exp.Expression) -> None:
                         "muestran fila por fila, sin totalizar. Devuelve las filas con su "
                         "monto y su moneda.",
                     )
+
+
+def _check_no_item_award_fanout(relations: set[str]) -> None:
+    """query.v_items y query.v_awards comparten process_id, pero eso NO es como
+    se relaciona un item con una adjudicacion -- un proceso puede tener varias
+    adjudicaciones y varios items, y unir las dos vistas directo por
+    process_id arma el producto cartesiano de ambas: cada item se cuenta una
+    vez por cada adjudicacion del proceso, no una vez por cada adjudicacion
+    que en verdad lo cubrio.
+
+    Verificado en produccion: "producto mas vendido en Costa Rica" sin pasar
+    por query.v_award_items conto un item 1,722,048 veces. La misma pregunta,
+    escrita uniendo award_id -> item_id como corresponde, dio 1,317 -- el
+    numero real. El primero se ve perfectamente creible (es solo un COUNT muy
+    grande) y no hay forma de notar desde el resultado que esta inflado.
+    """
+    if "query.v_awards" in relations and "query.v_items" in relations:
+        if "query.v_award_items" not in relations:
+            raise SqlRejected(
+                Outcome.REJECTED_SQL_FUNCTION,
+                "item_award_fanout",
+                "no se puede unir query.v_items con query.v_awards por process_id: "
+                "un proceso puede tener varias adjudicaciones y varios items, y esa "
+                "union arma un producto cartesiano que infla cualquier conteo o "
+                "listado. Une query.v_award_items en el medio (award_id -> item_id).",
+            )
 
 
 def _collect_relations(tree: exp.Expression) -> set[str]:
