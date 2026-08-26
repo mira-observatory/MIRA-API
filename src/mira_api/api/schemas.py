@@ -50,6 +50,11 @@ class Warning(BaseModel):
         "UNNORMALISED_ITEM_TEXT",
     ]
     message_es: str
+    #: El mismo aviso en ingles. Se agrega en vez de renombrar `message_es`
+    #: porque ese campo ya viaja en el contrato publico y en los tipos que
+    #: genera el frontend: romperlo obligaria a desplegar los dos repos a la
+    #: vez. El cliente elige segun `language` de la respuesta.
+    message_en: str | None = None
     details: dict[str, Any] = {}
 
 
@@ -91,6 +96,11 @@ class QueryResponse(BaseModel):
     #: inventado.
     sql_executed: str | None = None
     countries_filter: list[str]
+
+    #: Idioma en que se redacto la respuesta, detectado de la pregunta. El
+    #: cliente lo usa para elegir entre `message_es` y `message_en` de cada
+    #: aviso. Default "es": es un observatorio centroamericano.
+    language: Literal["es", "en"] = "es"
 
     columns: list[Column] = []
     rows: list[dict[str, Any]] = []

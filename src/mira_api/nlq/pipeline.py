@@ -15,6 +15,7 @@ from mira_api.db.executor import DatabaseError, QueryTimeout, ReadOnlyExecutor, 
 from mira_api.db.log_executor import LogExecutor
 from mira_api.llm.client import ClaudeApiError, ClaudeClient, ClaudeRefusal
 from mira_api.nlq.coverage_facts import diagnose_empty_result
+from mira_api.nlq.language import detect_language
 from mira_api.nlq.narrative import generate_narrative
 from mira_api.nlq.sql_generation import (
     GenerationAttempt,
@@ -166,6 +167,19 @@ def _schedule_audit_write(
     task.add_done_callback(_on_audit_task_done)
 
 
+def _warning_text(warning: Warning, language: str) -> str:
+    """El aviso en el idioma de la pregunta, con el espanol como respaldo.
+
+    Cuando el resultado viene vacio este texto NO es un adorno: es la
+    respuesta entera que ve la persona, porque el frontend muestra el aviso en
+    lugar de la narrativa. Servirlo en el idioma equivocado justo ahi es
+    dejarla sin explicacion en el unico caso donde mas la necesita.
+    """
+    if language == "en" and warning.message_en:
+        return warning.message_en
+    return warning.message_es
+
+
 def unnormalised_item_warning(relations: frozenset[str]) -> Warning | None:
     """Avisa que el nombre de producto viene tal como lo publico la fuente,
     sin categorizar.
@@ -195,6 +209,13 @@ def unnormalised_item_warning(relations: frozenset[str]) -> Warning | None:
             "distintas -- por ejemplo, cuando la fuente usa un texto generico como "
             '"Ver Pliego" en vez del detalle del producto -- o venir vacios. Tomalo '
             "como una aproximacion, no como una clasificacion exacta."
+        ),
+        message_en=(
+            "Product names come exactly as each source published them, with no "
+            "categorisation yet: they can repeat across genuinely different "
+            'purchases -- for instance when the source writes a generic label like '
+            '"Ver Pliego" instead of describing the product -- or come through '
+            "empty. Read this as an approximation, not an exact classification."
         ),
     )
 
@@ -247,6 +268,12 @@ def mixed_currency_warning(
                 "monto, el orden refleja el numero, no el valor. Conviene preguntar "
                 "por un pais a la vez."
             ),
+            message_en=(
+                f"This table mixes amounts in {', '.join(monedas)}, which are not "
+                "comparable: there is no exchange rate in the data. If it is sorted "
+                "by amount, that order reflects the number, not the value. Better to "
+                "ask about one country at a time."
+            ),
             details={"monedas": monedas},
         )
 
@@ -260,6 +287,14 @@ def mixed_currency_warning(
                 "cambio en los datos, asi que un ranking por monto entre paises deja "
                 "fuera a los de moneda mas fuerte. Conviene preguntar por un pais a "
                 "la vez."
+            ),
+            message_en=(
+                f"Several countries were asked about but the table only holds data "
+                f"for {', '.join(sorted(presentes))}: {', '.join(faltantes)} is "
+                "missing. Each country's amounts are in its own currency and there "
+                "is no exchange rate in the data, so ranking by amount across "
+                "countries leaves out the ones with a stronger currency. Better to "
+                "ask about one country at a time."
             ),
             details={"paises_ausentes": faltantes, "paises_presentes": sorted(presentes)},
         )
@@ -316,6 +351,10 @@ async def run_query(
     """
     query_id = uuid4()
     question = normalise_question(request.question)
+    # El idioma sale de la pregunta y no de una preferencia guardada: la
+    # misma persona puede preguntar en espanol y despues en ingles, y cada
+    # respuesta tiene que seguir a su propia pregunta.
+    language = detect_language(question)
     countries = [c.upper() for c in request.countries]
     timings_ms: dict[str, int] = {}
 
@@ -357,6 +396,7 @@ async def run_query(
             strategy="out_of_scope",
             outcome=Outcome.THROTTLED_BUDGET,
             countries_filter=countries,
+            language=language,
             timings_ms=timings_ms,
         )
 
@@ -397,6 +437,7 @@ async def run_query(
             strategy="out_of_scope",
             outcome=Outcome.OUT_OF_SCOPE,
             countries_filter=countries,
+            language=language,
             timings_ms=timings_ms,
         )
     except GenerationFailed as failed:
@@ -415,6 +456,7 @@ async def run_query(
             strategy="generated_sql",
             outcome=failed.outcome,
             countries_filter=countries,
+            language=language,
             timings_ms=timings_ms,
         )
     except (ClaudeRefusal, ClaudeApiError):
@@ -436,6 +478,7 @@ async def run_query(
             strategy="generated_sql",
             outcome=Outcome.FAILED_LLM_ERROR,
             countries_filter=countries,
+            language=language,
             timings_ms=timings_ms,
         )
     timings_ms["llm_ms"] = int((time.monotonic() - llm_start) * 1000)
@@ -463,6 +506,7 @@ async def run_query(
             outcome=Outcome.FAILED_DB_TIMEOUT,
             sql_executed=result.validated.sql,
             countries_filter=countries,
+            language=language,
             timings_ms=timings_ms,
         )
     except DatabaseError:
@@ -483,6 +527,7 @@ async def run_query(
             outcome=Outcome.FAILED_DB_ERROR,
             sql_executed=result.validated.sql,
             countries_filter=countries,
+            language=language,
             timings_ms=timings_ms,
         )
     timings_ms["db_ms"] = int((time.monotonic() - db_start) * 1000)
@@ -549,6 +594,11 @@ async def run_query(
                     "consulta: hay mas. Para verlo completo conviene preguntar por un "
                     "mes a la vez."
                 ),
+                message_en=(
+                    f"Showing {rows_result.row_count} rows, the per-query maximum: "
+                    "there are more. To see the whole set, better to ask one month "
+                    "at a time."
+                ),
                 details={"max_rows": rows_result.row_count},
             )
         )
@@ -556,7 +606,13 @@ async def run_query(
         # Se emite antes que la narrativa: el motivo del vacio, o el aviso de
         # que falta data por ver, es parte de la respuesta y no un adorno que
         # llega despues.
-        _emit("warnings", {"warnings": [w.model_dump() for w in warnings]})
+        _emit(
+            "warnings",
+            # El idioma viaja con los avisos, no solo en la respuesta final:
+            # el cliente los pinta apenas llegan, mucho antes del evento
+            # "done", y sin esto no sabria cual de los dos textos mostrar.
+            {"warnings": [w.model_dump() for w in warnings], "language": language},
+        )
 
     narrative_text: str | None = None
     narrative_verified = False
@@ -575,7 +631,7 @@ async def run_query(
             # Con cero filas o advertencias de cobertura/periodo faltante no se llama
             # al modelo: se sirve la explicacion exacta.
             empty_reason=(
-                warnings[0].message_es
+                _warning_text(warnings[0], language)
                 if (
                     warnings
                     and (
@@ -585,6 +641,7 @@ async def run_query(
                 )
                 else None
             ),
+            language=language,
         )
         timings_ms["narrative_ms"] = int((time.monotonic() - narrative_start) * 1000)
         await _charge_global_budget(
@@ -621,6 +678,7 @@ async def run_query(
         outcome=outcome,
         sql_executed=result.validated.sql,
         countries_filter=countries,
+            language=language,
         columns=columns,
         rows=rows_result.rows,
         row_count=rows_result.row_count,

@@ -100,11 +100,15 @@ SQL_VALIDATION_RETRY_PROMPT = (
 )
 
 NARRATIVE_SYSTEM_PROMPT = """\
-Redactas un resumen breve en espanol (2 a 4 frases) del resultado de una \
+Redactas un resumen breve ({idioma}, 2 a 4 frases) del resultado de una \
 consulta sobre contrataciones publicas de Centroamerica, para un ciudadano \
 que no sabe SQL.
 
 Reglas estrictas:
+0. ESCRIBE EN EL MISMO IDIOMA EN QUE ESTA LA PREGUNTA ({idioma}). Los datos \
+de la tabla NO se traducen: nombres de empresas, instituciones, titulos de \
+procesos y codigos de moneda van tal cual estan, porque son el dato oficial. \
+Lo que se adapta es tu redaccion, no el contenido de las celdas.
 1. No calcules. No estimes. No sumes. No promedies. Usa UNICAMENTE los \
 numeros que ya estan en la tabla, tal como estan.
 2. Si la pregunta pide un total que no aparece como una celda de la tabla, \
@@ -124,10 +128,15 @@ por uno a proposito, para no arriesgar un total equivocado entre monedas.
 haya dado la persona. No hay dolarizacion todavia. Reporta el monto tal cual \
 esta en la tabla, en su propia moneda, y si preguntan por otra moneda dilo \
 explicitamente.
-5. Responde solo con el resumen, sin titulos ni markdown.
+5. Responde solo con el resumen, sin titulos ni markdown. Nada de \
+asteriscos para negritas (**asi no**), ni guiones de lista, ni almohadillas: \
+el texto se muestra tal cual, asi que un asterisco se ve como un asterisco.
 6. Empieza de forma conversacional, como si le hablaras directamente a la \
-persona (por ejemplo "Claro, aqui tienes..." o "Con gusto, encontre..."). \
-Nunca empieces la respuesta con un numero o una lista en seco."""
+persona (en espanol "Claro, aqui tienes..."; en ingles "Sure, here's what I \
+found..."). Nunca empieces la respuesta con un numero o una lista en seco."""
+
+#: Como se le nombra el idioma al modelo dentro de NARRATIVE_SYSTEM_PROMPT.
+NARRATIVE_LANGUAGE_NAMES = {"es": "en espanol", "en": "in English"}
 
 NARRATIVE_RETRY_PROMPT = (
     "Estos numeros que escribiste no aparecen en la tabla: {invalid_numbers}. "

@@ -66,6 +66,17 @@ _COUNTRY_NAMES = {
 }
 
 
+#: Como se nombra cada entidad al explicar un resultado vacio en ingles.
+#: Las claves son las de _ENTITY_SQL.
+_ENTITY_NAMES_EN = {
+    "procesos": "processes",
+    "adjudicaciones": "awards",
+    "proveedores": "suppliers",
+    "compradores": "buyers",
+    "productos": "products",
+}
+
+
 def _country_name(code: str) -> str:
     return _COUNTRY_NAMES.get(code.upper(), code)
 
@@ -193,11 +204,21 @@ async def diagnose_empty_result(
             f"El resultado esta vacio porque todavia no hay {detalle} en la base. "
             "No significa que no existan: significa que aun no se han cargado."
         )
+        detalle_en = ", ".join(
+            f"{_ENTITY_NAMES_EN.get(entity, entity)} for "
+            f"{', '.join(_country_name(p) for p in paises)}"
+            for entity, paises in sorted(sin_datos.items())
+        )
+        mensaje_en = (
+            f"This result is empty because there are no {detalle_en} in the database "
+            "yet. That does not mean none exist: it means they have not been loaded."
+        )
         return EmptyResultDiagnosis(
             warnings=[
                 Warning(
                     code="PARTIAL_COVERAGE",
                     message_es=mensaje,
+                    message_en=mensaje_en,
                     details={"sin_datos": sin_datos},
                 )
             ],
@@ -225,11 +246,21 @@ async def diagnose_empty_result(
                 f"{detalles_cobertura}. El resultado en cero refleja la ausencia de datos "
                 "en ese rango, no que no hayan existido contrataciones."
             )
+            cobertura_en = ", ".join(
+                f"{_country_name(c)} (available: {dmin} to {dmax})"
+                for c, dmin, dmax in out_of_range_countries
+            )
+            mensaje_en = (
+                f"No data is available for the period asked about ({period_label}) in "
+                f"{cobertura_en}. The zero reflects the absence of data in that range, "
+                "not that no procurement took place."
+            )
             return EmptyResultDiagnosis(
                 warnings=[
                     Warning(
                         code="NO_DATA_FOR_PERIOD",
                         message_es=mensaje,
+                        message_en=mensaje_en,
                         details={
                             "periodo_consultado": period_label,
                             "paises_fuera_de_rango": [c for c, _, _ in out_of_range_countries],

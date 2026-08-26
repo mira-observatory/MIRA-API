@@ -5,8 +5,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from mira_api.llm.client import ClaudeApiError, ClaudeClient, ClaudeRefusal
+from mira_api.nlq.language import Language
 from mira_api.nlq.number_extraction import find_unverified_numbers
-from mira_api.nlq.prompts import NARRATIVE_RETRY_PROMPT, NARRATIVE_SYSTEM_PROMPT
+from mira_api.nlq.prompts import (
+    NARRATIVE_LANGUAGE_NAMES,
+    NARRATIVE_RETRY_PROMPT,
+    NARRATIVE_SYSTEM_PROMPT,
+)
 from mira_api.nlq.sql_generation import Usage
 
 
@@ -18,11 +23,30 @@ class NarrativeResult:
     usage: Usage
 
 
-def _fallback_template(row_count: int, truncated: bool) -> str:
+#: La plantilla determinista que reemplaza a la redaccion cuando el modelo
+#: falla o alucina. Tiene que existir en los dos idiomas: si no, una pregunta
+#: en ingles que cae al fallback recibe una respuesta en espanol, que es
+#: justo el caso en que la persona menos entiende que paso.
+_FALLBACK_TEMPLATES = {
+    "es": {
+        "zero": "No se encontraron resultados para esta consulta.",
+        "rows": "La consulta devolvio {n} fila(s){suffix}. Ver la tabla para el detalle.",
+        "truncated": " (resultado truncado, hay mas filas de las que se muestran)",
+    },
+    "en": {
+        "zero": "No results were found for this query.",
+        "rows": "The query returned {n} row(s){suffix}. See the table for details.",
+        "truncated": " (result truncated -- there are more rows than shown)",
+    },
+}
+
+
+def _fallback_template(row_count: int, truncated: bool, language: Language = "es") -> str:
+    textos = _FALLBACK_TEMPLATES.get(language, _FALLBACK_TEMPLATES["es"])
     if row_count == 0:
-        return "No se encontraron resultados para esta consulta."
-    suffix = " (resultado truncado, hay mas filas de las que se muestran)" if truncated else ""
-    return f"La consulta devolvio {row_count} fila(s){suffix}. Ver la tabla para el detalle."
+        return textos["zero"]
+    suffix = textos["truncated"] if truncated else ""
+    return textos["rows"].format(n=row_count, suffix=suffix)
 
 
 def _build_user_message(
@@ -64,6 +88,7 @@ async def generate_narrative(
     max_rows_in_prompt: int = 25,
     max_tokens: int = 512,
     empty_reason: str | None = None,
+    language: Language = "es",
 ) -> NarrativeResult:
     """T3.5 (redaccion) + T3.6 (verificador anti-alucinacion). Nunca bloquea
     la respuesta: si el modelo sigue inventando numeros despues del
@@ -76,12 +101,15 @@ async def generate_narrative(
         # esta vacio o fuera de cobertura. Sin el se caia en "No se encontraron resultados", que
         # confunde "no hubo contrataciones" con "no tenemos esos datos".
         return NarrativeResult(
-            text=empty_reason or _fallback_template(row_count, truncated),
+            text=empty_reason or _fallback_template(row_count, truncated, language),
             verified=True,
             unverified_numbers=[],
             usage=usage,
         )
 
+    sistema = NARRATIVE_SYSTEM_PROMPT.format(
+        idioma=NARRATIVE_LANGUAGE_NAMES.get(language, NARRATIVE_LANGUAGE_NAMES["es"])
+    )
     messages: list[dict[str, object]] = [
         {
             "role": "user",
@@ -95,7 +123,7 @@ async def generate_narrative(
         try:
             completion = await client.complete_text(
                 model=model,
-                system=[{"type": "text", "text": NARRATIVE_SYSTEM_PROMPT}],
+                system=[{"type": "text", "text": sistema}],
                 messages=messages,
                 max_tokens=max_tokens,
             )
@@ -123,7 +151,7 @@ async def generate_narrative(
             )
         if attempt == max_attempts:
             return NarrativeResult(
-                text=_fallback_template(row_count, truncated),
+                text=_fallback_template(row_count, truncated, language),
                 verified=False,
                 unverified_numbers=invalid,
                 usage=usage,
@@ -139,7 +167,7 @@ async def generate_narrative(
         )
 
     return NarrativeResult(
-        text=_fallback_template(row_count, truncated),
+        text=_fallback_template(row_count, truncated, language),
         verified=False,
         unverified_numbers=[],
         usage=usage,
