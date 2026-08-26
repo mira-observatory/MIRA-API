@@ -9,6 +9,7 @@ from mira_api.db.executor import Rows
 from mira_api.llm.client import Completion
 from mira_api.nlq.pipeline import (
     _infer_column_kind,
+    _strip_internal_ids,
     mixed_currency_warning,
     normalise_question,
     run_query,
@@ -745,3 +746,133 @@ def test_sin_aviso_si_la_tabla_no_trae_montos() -> None:
     rows = [{"country_code": "CR", "count": 10}]
 
     assert mixed_currency_warning(columns, rows, ["CR", "GT"]) is None
+
+
+# --- Ocultar identificadores internos de la tabla que ve la persona --------
+
+
+def test_strip_internal_ids_saca_las_claves_sinteticas() -> None:
+    """MIRA-CR-AWARD-BA79BA102334 no le dice nada a un ciudadano y expone el
+    esquema interno sin necesidad. Verificado contra datos reales
+    (2026-08-26): asi se ve un award_id/process_id de verdad."""
+    result = Rows(
+        columns=["process_id", "award_id", "title", "awarded_amount", "currency_code"],
+        rows=[
+            {
+                "process_id": "MIRA-CR-B86D94B96C1A",
+                "award_id": "MIRA-CR-AWARD-BA79BA102334",
+                "title": "Compra de tuberia",
+                "awarded_amount": 15_318_000_000,
+                "currency_code": "CRC",
+            }
+        ],
+        row_count=1,
+        truncated=False,
+    )
+
+    limpio = _strip_internal_ids(result)
+
+    assert limpio.columns == ["title", "awarded_amount", "currency_code"]
+    assert limpio.rows == [
+        {
+            "title": "Compra de tuberia",
+            "awarded_amount": 15_318_000_000,
+            "currency_code": "CRC",
+        }
+    ]
+    # row_count y truncated no son columnas de datos -- se conservan tal cual.
+    assert limpio.row_count == 1
+    assert not limpio.truncated
+
+
+def test_strip_internal_ids_conserva_lo_que_si_es_publico() -> None:
+    """process_number es el numero real del expediente en SICOP, distinto de
+    process_id (una clave sintetica de MIRA). supplier_tax_id es la cedula
+    juridica real, publica -- distinta de supplier_id (un entero interno
+    secuencial). country_code/currency_code son codigos legibles, no claves
+    de fila. Ninguno de estos se oculta."""
+    result = Rows(
+        columns=["process_id", "process_number", "supplier_id", "supplier_tax_id", "country_code"],
+        rows=[
+            {
+                "process_id": "MIRA-CR-B86D94B96C1A",
+                "process_number": "2025XE-000049-0000400001",
+                "supplier_id": 1,
+                "supplier_tax_id": "3101530313",
+                "country_code": "CR",
+            }
+        ],
+        row_count=1,
+        truncated=False,
+    )
+
+    limpio = _strip_internal_ids(result)
+
+    assert limpio.columns == ["process_number", "supplier_tax_id", "country_code"]
+    assert limpio.rows[0] == {
+        "process_number": "2025XE-000049-0000400001",
+        "supplier_tax_id": "3101530313",
+        "country_code": "CR",
+    }
+
+
+def test_strip_internal_ids_sin_ids_no_cambia_nada() -> None:
+    result = Rows(
+        columns=["title", "awarded_amount"],
+        rows=[{"title": "x", "awarded_amount": 100}],
+        row_count=1,
+        truncated=False,
+    )
+
+    assert _strip_internal_ids(result) == result
+
+
+@pytest.mark.asyncio
+async def test_la_respuesta_final_no_trae_ids_internos() -> None:
+    """De punta a punta: aunque el SQL generado seleccione process_id (para
+    el JOIN, o porque el modelo lo agrego de mas), la persona nunca lo ve --
+    ni en las columnas ni en el JSON de las filas. El SQL ejecutado si sigue
+    mostrando el JOIN completo: la trazabilidad tecnica no se pierde, solo se
+    saca de la tabla pensada para leerse sin SQL."""
+    client = _ScriptedClient(
+        ["select process_id, award_id, title, awarded_amount, currency_code from query.v_awards"]
+    )
+    executor = _ScriptedExecutor(
+        result=Rows(
+            columns=["process_id", "award_id", "title", "awarded_amount", "currency_code"],
+            rows=[
+                {
+                    "process_id": "MIRA-CR-B86D94B96C1A",
+                    "award_id": "MIRA-CR-AWARD-BA79BA102334",
+                    "title": "Compra de tuberia",
+                    "awarded_amount": 15_318_000_000,
+                    "currency_code": "CRC",
+                }
+            ],
+            row_count=1,
+            truncated=False,
+        )
+    )
+
+    response = await run_query(
+        _request(),
+        client=client,  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
+        system_blocks=[],
+        model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY,
+        budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
+    )
+
+    nombres_de_columna = {c.name for c in response.columns}
+    assert "process_id" not in nombres_de_columna
+    assert "award_id" not in nombres_de_columna
+    assert all("process_id" not in fila and "award_id" not in fila for fila in response.rows)
+    # El SQL ejecutado si conserva las columnas -- es la prueba tecnica, no la tabla.
+    assert "process_id" in (response.sql_executed or "")

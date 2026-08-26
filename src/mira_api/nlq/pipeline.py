@@ -4,13 +4,14 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Literal
 from uuid import uuid4
 
 from mira_api.api.schemas import Column, CoverageNote, QueryRequest, QueryResponse, Warning
 from mira_api.audit.outcomes import Outcome
 from mira_api.audit.writer import QueryLogRecord, write_audit_log
-from mira_api.db.executor import DatabaseError, QueryTimeout, ReadOnlyExecutor
+from mira_api.db.executor import DatabaseError, QueryTimeout, ReadOnlyExecutor, Rows
 from mira_api.db.log_executor import LogExecutor
 from mira_api.llm.client import ClaudeApiError, ClaudeClient, ClaudeRefusal
 from mira_api.nlq.coverage_facts import diagnose_empty_result
@@ -34,6 +35,52 @@ logger = logging.getLogger(__name__)
 #: "No existe columna de monto unificada, y es a proposito").
 _MONEY_COLUMNS = {"estimated_amount", "awarded_amount"}
 _DATE_COLUMNS_SUFFIXES = ("_date", "_at")
+
+#: Claves sinteticas de MIRA -- sin significado fuera de esta base, ni
+#: siquiera son el numero real del expediente. Verificado contra datos reales
+#: (2026-08-26): process_id vale "MIRA-CR-B86D94B96C1A"; el numero real del
+#: expediente en SICOP es process_number ("2025XE-000049-0000400001"), una
+#: columna distinta que SI se conserva. Mismo caso con supplier_id (un entero
+#: interno secuencial: 1, 2, 3...) contra supplier_tax_id (la cedula juridica
+#: real, publica). country_code y currency_code tampoco entran aqui: son
+#: codigos legibles, no claves de fila.
+_INTERNAL_ID_COLUMNS = frozenset(
+    {
+        "process_id",
+        "award_id",
+        "item_id",
+        "buyer_id",
+        "supplier_id",
+        "source_item_id",
+        "source_award_id",
+    }
+)
+
+
+def _strip_internal_ids(result: Rows) -> Rows:
+    """Saca las claves internas de MIRA de lo que se le muestra a la persona.
+
+    "MIRA-CR-AWARD-BA79BA102334" no le dice nada a un ciudadano y expone como
+    esta armado el esquema interno sin necesidad -- la pregunta nunca es "cual
+    es el ID", es sobre el proceso, el monto, la fecha o quien lo gano.
+
+    Se hace aca y no solo ocultando la columna en la tabla del frontend: si se
+    dejara en el JSON de la respuesta, cualquiera con las herramientas de
+    desarrollador del navegador lo veria igual. Corre antes de que narrativa,
+    avisos y auditoria toquen las filas, asi que todo el pipeline ve la misma
+    version filtrada -- la narrativa no puede citar un ID que no vio, y no hay
+    forma de que la tabla y lo que redacta el modelo queden desincronizados.
+
+    El SQL ejecutado (sql_executed en la respuesta) sigue mostrando los JOIN
+    con esas columnas tal cual: la trazabilidad tecnica para quien la quiera
+    no se pierde, solo se saca de la tabla pensada para leerse sin SQL.
+    """
+    columnas = [c for c in result.columns if c not in _INTERNAL_ID_COLUMNS]
+    filas = [
+        {clave: valor for clave, valor in fila.items() if clave not in _INTERNAL_ID_COLUMNS}
+        for fila in result.rows
+    ]
+    return replace(result, columns=columnas, rows=filas)
 
 
 def normalise_question(question: str) -> str:
@@ -406,6 +453,7 @@ async def run_query(
             timings_ms=timings_ms,
         )
     timings_ms["db_ms"] = int((time.monotonic() - db_start) * 1000)
+    rows_result = _strip_internal_ids(rows_result)
 
     columns = _columns_from_rows(rows_result.columns, rows_result.rows)
     _emit(
