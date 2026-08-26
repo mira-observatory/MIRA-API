@@ -71,9 +71,9 @@ async def generate_narrative(
     datos ya se le entregaron al usuario de todas formas.
     """
     usage = Usage()
-    if row_count == 0:
+    if row_count == 0 or empty_reason:
         # `empty_reason` viene del diagnostico de cobertura y explica POR QUE
-        # esta vacio. Sin el se caia en "No se encontraron resultados", que
+        # esta vacio o fuera de cobertura. Sin el se caia en "No se encontraron resultados", que
         # confunde "no hubo contrataciones" con "no tenemos esos datos".
         return NarrativeResult(
             text=empty_reason or _fallback_template(row_count, truncated),
