@@ -142,6 +142,7 @@ def validate(sql: str, *, max_rows: int, countries: list[str]) -> ValidatedSql:
             raise SqlRejected(Outcome.REJECTED_SQL_FUNCTION, "forbidden_function", name)
 
     _check_no_money_aggregation(tree)
+    _check_no_money_arithmetic(tree)
 
     if relations & _COUNTRY_SCOPED_VIEWS:
         _check_country_scope(tree, countries)
@@ -164,6 +165,41 @@ _MONEY_COLUMNS = frozenset({"awarded_amount", "estimated_amount"})
 #: MIN y MAX quedan fuera a proposito: devuelven un valor que si esta en los
 #: datos, no uno calculado, asi que "la adjudicacion mas cara" sigue andando.
 _MONEY_AGGREGATES = (exp.Sum, exp.Avg)
+
+
+#: Operaciones que producen un valor de dinero que no es el que esta guardado.
+_MONEY_ARITHMETIC = (exp.Add, exp.Sub, exp.Mul, exp.Div)
+
+
+def _check_no_money_arithmetic(tree: exp.Expression) -> None:
+    """Prohibe sumar, restar, multiplicar o dividir un monto (decision de
+    producto, verificado en produccion: pedir "el precio en dolares a 8Q el
+    dolar" hizo que el modelo generara `awarded_amount / 8`).
+
+    Esto es distinto de _check_no_money_aggregation: SUM/AVG combinan varias
+    filas en una, pero `awarded_amount / 8` es una division simple que no
+    agrega nada -- pasa esa otra regla sin problema. Y es mas traicionera:
+    el resultado queda como una celda mas en la tabla, asi que el verificador
+    anti-alucinacion (que solo compara contra las celdas del resultado) lo da
+    por verificado. Un tipo de cambio inventado por el modelo se ve entonces
+    identico a un dato real.
+
+    No hay dolarizacion todavia -- decision de producto. Todo monto se
+    muestra tal cual esta guardado, en su propia moneda, sin excepcion.
+    """
+    for tipo in _MONEY_ARITHMETIC:
+        for operacion in tree.find_all(tipo):
+            for columna in operacion.find_all(exp.Column):
+                if columna.name.lower() in _MONEY_COLUMNS:
+                    raise SqlRejected(
+                        Outcome.REJECTED_SQL_FUNCTION,
+                        "money_arithmetic",
+                        f"no se puede operar sobre {columna.name} con {tipo.__name__.lower()}: "
+                        "los montos se muestran tal cual estan guardados, en su propia moneda, "
+                        "sin sumar, restar, multiplicar ni dividir. No hay conversion de moneda "
+                        "disponible todavia -- si preguntan por otra moneda, dilo y muestra el "
+                        "monto original.",
+                    )
 
 
 def _check_no_money_aggregation(tree: exp.Expression) -> None:

@@ -312,3 +312,50 @@ def test_alcanza_a_varias_columnas_del_mismo_order_by() -> None:
     result = validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES)
 
     assert result.sql.upper().count("NULLS LAST") == 2
+
+
+# --- Prohibicion de operar sobre dinero (bug real, produccion, 2026-08-25) ---
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # El caso real: "el precio en dolares a 8Q el dolar" -> el modelo
+        # genero esta division. No es SUM/AVG, asi que la otra regla no la ve.
+        "select award_id, awarded_amount / 8 as monto_usd from query.v_awards",
+        "select award_id, awarded_amount * 1.1 from query.v_awards",
+        "select award_id, awarded_amount + 100 from query.v_awards",
+        "select award_id, awarded_amount - estimated_amount from query.v_awards",
+        "select estimated_amount / 8 from query.v_process where country_code = 'CR'",
+        # Escondido detras de un CAST, igual se detecta.
+        "select cast(awarded_amount as numeric) / 8 from query.v_awards",
+    ],
+)
+def test_rechaza_operar_sobre_dinero(sql: str) -> None:
+    """El caso real: pedir el precio en dolares a una tasa inventada hizo que
+    el modelo generara una division simple sobre awarded_amount. No agrega
+    filas, asi que _check_no_money_aggregation no la ve -- y el resultado
+    queda como una celda mas, asi que el verificador anti-alucinacion la
+    habria dado por buena: un tipo de cambio inventado, indistinguible de un
+    dato real."""
+    with pytest.raises(SqlRejected) as err:
+        validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES)
+
+    assert err.value.outcome is Outcome.REJECTED_SQL_FUNCTION
+    assert err.value.rule == "money_arithmetic"
+    assert "conversion de moneda" in err.value.detail
+
+
+def test_permite_comparar_montos_sin_operar_sobre_ellos() -> None:
+    """Un filtro (WHERE awarded_amount > X) no produce un valor nuevo -- no
+    es lo mismo que operar sobre el monto para transformarlo."""
+    sql = (
+        "select award_id, awarded_amount from query.v_awards "
+        "where awarded_amount > 1000000 order by awarded_amount desc"
+    )
+    assert validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES).sql
+
+
+def test_permite_seguir_mostrando_montos_tal_cual() -> None:
+    sql = "select award_id, awarded_amount, currency_code from query.v_awards"
+    assert validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES).sql
