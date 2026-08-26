@@ -69,6 +69,19 @@ def test_prompt_indica_que_compras_y_gasto_usan_awards() -> None:
     assert "estimated_amount es solo presupuesto estimado" in SQL_SYSTEM_PROMPT
 
 
+def test_prompt_indica_buscar_categoria_de_compra_en_titulo_no_en_items() -> None:
+    """Guatemala en vivo (2026-08-26): "la compra mas cara de Medicamentos"
+    volvia vacia porque el modelo, siguiendo la 6b, filtraba la categoria
+    contra item_description ("Meropenem", nunca la palabra "medicamento") y
+    category_normalised (vacia en el 100% de los items). El dato si existe:
+    4,717 procesos de GT dicen "medicamento" en su titulo, y el mas caro
+    (Q385,209,975.64, Irbesartan) es real. La regla 6c redirige esas preguntas
+    a un ILIKE sobre title/description de v_process en vez de v_items."""
+    assert "category_normalised viene vacia en el 100% de" in SQL_SYSTEM_PROMPT
+    assert "category_source es un codigo numerico (UNSPSC" in SQL_SYSTEM_PROMPT
+    assert "filtra con ILIKE sobre title y/o description de query.v_process" in SQL_SYSTEM_PROMPT
+
+
 @pytest.mark.asyncio
 async def test_acepta_sql_valido_en_el_primer_intento() -> None:
     client = _ScriptedClient(

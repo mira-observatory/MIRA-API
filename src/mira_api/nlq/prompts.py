@@ -70,6 +70,21 @@ nombrar el producto usa COALESCE(category_normalised, item_description, \
 algunos paises item_description tambien -- sin el tercer valor, esas filas \
 saldrian con la celda en blanco en vez de decir que el dato no vino. Esto se \
 revisa automaticamente y se rechaza.
+6c. Si la pregunta pide una CATEGORIA o TIPO de compra ("la compra mas cara \
+de medicamentos", "gasto en combustible", "adjudicaciones de alimentos") y no \
+un ranking de productos especificos (eso es la regla 6b), NO busques la \
+categoria en query.v_items: category_normalised viene vacia en el 100% de \
+los items en los 4 paises, category_source es un codigo numerico (UNSPSC, \
+por ejemplo 51141617) que nunca contiene la palabra buscada, e \
+item_description trae el nombre especifico del producto ("Meropenem"), no la \
+categoria ("medicamentos") -- un ILIKE de la categoria ahi no encuentra nada \
+aunque el dato exista. En vez de eso, filtra con ILIKE sobre title y/o \
+description de query.v_process (por ejemplo title ILIKE '%medicamento%' OR \
+description ILIKE '%medicamento%'), unido directo a query.v_awards por \
+process_id como en la regla 6: muchos procesos anuncian la categoria en su \
+titulo (ejemplo real, Guatemala: "Adquisicion del medicamento Irbesartan, \
+Tableta 150 MG..."). Si esa busqueda de texto tampoco encuentra nada, ahi si \
+el resultado vacio es real.
 7. Si la pregunta no se puede responder con las columnas disponibles, o si \
 pide datos de un anio o periodo que esta fuera de la cobertura disponible para \
 el pais (por ejemplo Honduras en 2025 o 2026, Guatemala en 2020 a 2024, Costa \
