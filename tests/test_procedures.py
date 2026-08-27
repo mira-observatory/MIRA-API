@@ -5,7 +5,13 @@ from decimal import Decimal
 
 import pytest
 
-from mira_api.db.procedures import PROCEDURES_SQL, _contains_pattern, fetch_procedures
+from mira_api.db.procedures import (
+    PROCEDURES_SQL,
+    PROCESS_STATUSES_SQL,
+    _contains_pattern,
+    fetch_procedures,
+    fetch_process_statuses,
+)
 
 
 class _Cursor:
@@ -21,9 +27,9 @@ class _Cursor:
     async def __aexit__(self, *args):
         return None
 
-    async def execute(self, sql: str, params: dict[str, object]) -> None:
+    async def execute(self, sql: str, params: dict[str, object] | None = None) -> None:
         self.sql = sql
-        self.params = params
+        self.params = params or {}
 
     async def fetchall(self) -> list[dict[str, object]]:
         return self.rows
@@ -122,3 +128,19 @@ def test_sql_is_fixed_and_search_escapes_wildcards() -> None:
     assert "%(countries)s" in PROCEDURES_SQL
     assert all(word not in PROCEDURES_SQL.lower() for word in ("delete ", "update ", "insert "))
     assert _contains_pattern(r"a_b%c\d") == r"%a\_b\%c\\d%"
+
+
+@pytest.mark.asyncio
+async def test_status_catalog_comes_from_distinct_database_values() -> None:
+    pool = _Pool(
+        [
+            {"value": "AWARDED", "process_count": 20},
+            {"value": "OPEN", "process_count": 10},
+        ]
+    )
+
+    result = await fetch_process_statuses(pool)  # type: ignore[arg-type]
+
+    assert [status.value for status in result.statuses] == ["AWARDED", "OPEN"]
+    assert result.statuses[0].process_count == 20
+    assert "select distinct" in PROCESS_STATUSES_SQL.lower()

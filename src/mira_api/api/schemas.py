@@ -214,20 +214,6 @@ class CoverageResponse(BaseModel):
     countries: list[CoverageCountry] = Field(default_factory=list)
 
 
-ProcessStatus = Literal[
-    "PLANNED",
-    "PUBLISHED",
-    "OPEN",
-    "EVALUATION",
-    "AWARDED",
-    "CONTRACTED",
-    "COMPLETED",
-    "CANCELLED",
-    "DESERTED",
-    "SUSPENDED",
-]
-
-
 class Procedure(BaseModel):
     process_id: str
     process_number: str | None = None
@@ -235,7 +221,7 @@ class Procedure(BaseModel):
     title: str | None = None
     description: str | None = None
     procurement_method: str | None = None
-    process_status: ProcessStatus | None = None
+    process_status: str | None = None
     source_status: str | None = None
     publication_date: datetime | None = None
     closing_date: datetime | None = None
@@ -249,7 +235,7 @@ class Procedure(BaseModel):
 class ProcedureFilters(BaseModel):
     q: str | None = None
     countries: list[str] = Field(default_factory=list)
-    statuses: list[ProcessStatus] = Field(default_factory=list)
+    statuses: list[str] = Field(default_factory=list)
     procurement_methods: list[str] = Field(default_factory=list)
     published_from: date | None = None
     published_to: date | None = None
@@ -262,3 +248,12 @@ class ProceduresResponse(BaseModel):
     page_size: int
     total_pages: int
     filters: ProcedureFilters
+
+
+class ProcessStatusOption(BaseModel):
+    value: str
+    process_count: int
+
+
+class ProcessStatusesResponse(BaseModel):
+    statuses: list[ProcessStatusOption] = Field(default_factory=list)

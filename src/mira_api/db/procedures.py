@@ -11,8 +11,18 @@ from mira_api.api.schemas import (
     Procedure,
     ProcedureFilters,
     ProceduresResponse,
-    ProcessStatus,
+    ProcessStatusesResponse,
+    ProcessStatusOption,
 )
+
+PROCESS_STATUSES_SQL = """
+    select distinct
+        process_status as value,
+        count(*) over (partition by process_status) as process_count
+    from query.v_process
+    where process_status is not null
+    order by value
+"""
 
 PROCEDURE_FILTER_SQL = """
     where (%(countries)s::text[] is null or p.country_code = any(%(countries)s::text[]))
@@ -64,7 +74,7 @@ async def fetch_procedures(
     *,
     q: str | None,
     countries: list[str],
-    statuses: list[ProcessStatus],
+    statuses: list[str],
     procurement_methods: list[str],
     published_from: date | None,
     published_to: date | None,
@@ -123,3 +133,12 @@ def _contains_pattern(value: str) -> str:
 
 def _without_total(row: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in row.items() if key != "total_count"}
+
+
+async def fetch_process_statuses(pool: AsyncConnectionPool) -> ProcessStatusesResponse:
+    async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cursor:
+        await cursor.execute(PROCESS_STATUSES_SQL)
+        rows = await cursor.fetchall()
+    return ProcessStatusesResponse(
+        statuses=[ProcessStatusOption.model_validate(row) for row in rows]
+    )

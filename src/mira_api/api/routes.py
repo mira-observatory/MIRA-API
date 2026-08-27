@@ -6,9 +6,9 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import StringConstraints
 
-from mira_api.api.schemas import CoverageResponse, ProceduresResponse, ProcessStatus
+from mira_api.api.schemas import CoverageResponse, ProceduresResponse, ProcessStatusesResponse
 from mira_api.db.coverage import fetch_coverage
-from mira_api.db.procedures import fetch_procedures
+from mira_api.db.procedures import fetch_procedures, fetch_process_statuses
 
 router = APIRouter()
 
@@ -38,6 +38,16 @@ ProcurementMethod = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=160),
 ]
+StatusFilter = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=64),
+]
+
+
+@router.get("/procedures/statuses", response_model=ProcessStatusesResponse)
+async def get_process_statuses(request: Request) -> ProcessStatusesResponse:
+    """Estados normalizados que existen actualmente, con su conteo real."""
+    return await fetch_process_statuses(request.app.state.read_pool)
 
 
 @router.get("/procedures", response_model=ProceduresResponse)
@@ -45,7 +55,7 @@ async def get_procedures(
     request: Request,
     q: Annotated[str | None, Query(min_length=2, max_length=200)] = None,
     country: Annotated[list[CountryCode] | None, Query(max_length=10)] = None,
-    status: Annotated[list[ProcessStatus] | None, Query(max_length=10)] = None,
+    status: Annotated[list[StatusFilter] | None, Query(max_length=20)] = None,
     procurement_method: Annotated[list[ProcurementMethod] | None, Query(max_length=20)] = None,
     published_from: date | None = None,
     published_to: date | None = None,

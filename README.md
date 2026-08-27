@@ -239,6 +239,10 @@ busqueda textual (`q`), filtros repetibles de pais (`country`) y estado
 publicacion (`published_from`, `published_to`) y paginacion (`page`,
 `page_size`). No invoca modelos ni consume cuota.
 
+`GET /procedures/statuses` devuelve los valores distintos y no nulos de
+`process_status` que existen actualmente, junto con el conteo de procedimientos
+de cada uno. El frontend no mantiene una copia del catalogo.
+
 Las tres conexiones del servicio tienen privilegios separados:
 
 | Variable | Rol | Acceso |
