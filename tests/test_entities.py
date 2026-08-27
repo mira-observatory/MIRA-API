@@ -57,6 +57,13 @@ def test_build_sql_usa_query_f_unaccent_no_mart() -> None:
     assert "mart." not in sql, "el SQL de resolucion de entidades nunca toca mart"
 
 
+def test_build_sql_califica_similarity_fuera_del_search_path_query() -> None:
+    """pg_trgm vive en public, que el pool de lectura no incluye en search_path."""
+    sql = _build_sql(_CONFIG["buyer"])
+    assert "public.similarity(" in sql
+    assert " similarity(" not in sql
+
+
 @pytest.mark.asyncio
 async def test_query_vacia_no_toca_la_base() -> None:
     result = await resolve_entities(

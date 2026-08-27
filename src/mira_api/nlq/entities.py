@@ -69,7 +69,7 @@ def _build_sql(config: _EntityConfig) -> str:
                 when {normalised} = {normalised_query} then 'NAME_EXACT'
                 else 'NAME_FUZZY'
             end as match_method,
-            similarity({normalised}, {normalised_query}) as similarity
+            public.similarity({normalised}, {normalised_query}) as similarity
         from {config.view} e
         left join (
             select {config.id_column}, count(distinct {config.link_count_column}) as record_count
@@ -80,12 +80,12 @@ def _build_sql(config: _EntityConfig) -> str:
           and (
               e.{config.tax_id_column} = %(query)s
               or {normalised} = {normalised_query}
-              or similarity({normalised}, {normalised_query}) >= %(threshold)s
+              or public.similarity({normalised}, {normalised_query}) >= %(threshold)s
           )
         order by
             (e.{config.tax_id_column} = %(query)s) desc,
             ({normalised} = {normalised_query}) desc,
-            similarity({normalised}, {normalised_query}) desc,
+            public.similarity({normalised}, {normalised_query}) desc,
             record_count desc
         limit %(limit)s
     """
