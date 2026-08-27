@@ -3,20 +3,32 @@ from __future__ import annotations
 import pytest
 
 from mira_api.db.executor import Rows
-from mira_api.nlq.coverage_facts import diagnose_empty_result
+from mira_api.nlq.coverage_facts import diagnose_empty_result, extract_text_search_predicates
 
 
 class _FakeExecutor:
     """Devuelve conteos por vista. `None` simula que la consulta revienta."""
 
-    def __init__(self, por_vista: dict[str, list[dict[str, object]]] | None) -> None:
+    def __init__(
+        self,
+        por_vista: dict[str, list[dict[str, object]]] | None,
+        por_termino: dict[str, list[dict[str, object]]] | None = None,
+    ) -> None:
         self._por_vista = por_vista
+        #: Filas por termino de busqueda, para el chequeo de ILIKE de
+        #: extract_text_search_predicates -- necesita distinguirse de la
+        #: consulta de entidad de arriba aunque ambas toquen query.v_process.
+        self._por_termino = por_termino or {}
         self.consultas: list[str] = []
 
     async def run(self, sql: str, *, max_rows: int, params: dict | None = None) -> Rows:
         if self._por_vista is None:
             raise RuntimeError("boom")
         self.consultas.append(sql)
+        if "ilike %(patron)s" in sql and params is not None:
+            termino = str(params.get("patron", "")).strip("%")
+            filas = self._por_termino.get(termino, [])
+            return Rows(columns=[], rows=filas, row_count=len(filas), truncated=False)
         # Se busca por "from query.v_x": la consulta de adjudicaciones tambien
         # menciona v_process en el JOIN, y un substring suelto la confundiria
         # con la de procesos.
@@ -193,3 +205,103 @@ async def test_avisa_cuando_falta_el_vinculo_item_adjudicacion() -> None:
     assert "productos" in aviso.message_es
     assert "Guatemala" in aviso.message_es
     assert aviso.details["sin_datos"] == {"productos": ["GT"]}
+
+
+# --- extract_text_search_predicates ------------------------------------------
+
+
+def test_extrae_ilike_sobre_columna_de_texto_conocida() -> None:
+    sql = "SELECT * FROM query.v_process WHERE procurement_method ILIKE '%directa%'"
+    assert extract_text_search_predicates(sql) == [("procurement_method", "directa")]
+
+
+def test_ignora_ilike_sobre_columna_que_no_es_de_busqueda_de_categoria() -> None:
+    """category_normalised/item_description ya tienen su propio manejo (regla
+    6c los evita); un ILIKE ahi no es el caso que este chequeo cubre."""
+    sql = "SELECT * FROM query.v_items WHERE item_description ILIKE '%meropenem%'"
+    assert extract_text_search_predicates(sql) == []
+
+
+def test_extrae_varios_predicados_sin_duplicar() -> None:
+    sql = (
+        "SELECT * FROM query.v_process WHERE title ILIKE '%medicamento%' "
+        "OR description ILIKE '%medicamento%'"
+    )
+    assert extract_text_search_predicates(sql) == [
+        ("title", "medicamento"),
+        ("description", "medicamento"),
+    ]
+
+
+def test_sql_invalido_no_revienta() -> None:
+    assert extract_text_search_predicates("esto no es sql") == []
+    assert extract_text_search_predicates("") == []
+
+
+# --- Termino de categoria/modalidad que no calza con un pais -----------------
+
+
+PROCESS_ONLY = frozenset({"query.v_process"})
+
+
+@pytest.mark.asyncio
+async def test_avisa_cuando_el_termino_no_calza_con_ningun_pais() -> None:
+    """Caso real (2026-08-27): "adjudicacion directa" en Costa Rica volvia
+    vacio sin explicacion. CR tiene 12,783 procesos (el chequeo de entidad no
+    dispara) y no hay periodo fuera de rango, pero CR nunca escribe la
+    palabra "directa" en su procurement_method."""
+    executor = _FakeExecutor(
+        por_vista={"query.v_process": [{"country_code": "CR", "n": 12783}]},
+        por_termino={"directa": []},  # ningun pais tiene una fila que calce
+    )
+    sql = "SELECT * FROM query.v_process WHERE country_code = 'CR' AND procurement_method ILIKE '%directa%'"
+
+    d = await diagnose_empty_result(
+        executor, countries=["CR"], relations=PROCESS_ONLY, sql=sql  # type: ignore[arg-type]
+    )
+
+    assert len(d.warnings) == 1
+    aviso = d.warnings[0]
+    assert aviso.code == "NO_MATCH_FOR_TERM"
+    assert '"directa"' in aviso.message_es
+    assert "Costa Rica" in aviso.message_es
+    assert aviso.details["terminos_sin_match"] == {"directa": ["CR"]}
+
+
+@pytest.mark.asyncio
+async def test_sin_aviso_de_termino_si_el_pais_si_tiene_coincidencias() -> None:
+    executor = _FakeExecutor(
+        por_vista={"query.v_process": [{"country_code": "HN", "n": 196973}]},
+        por_termino={"directa": [{"country_code": "HN", "n": 3192}]},
+    )
+    sql = "SELECT * FROM query.v_process WHERE country_code = 'HN' AND procurement_method ILIKE '%directa%'"
+
+    d = await diagnose_empty_result(
+        executor, countries=["HN"], relations=PROCESS_ONLY, sql=sql  # type: ignore[arg-type]
+    )
+
+    assert d.warnings == []
+
+
+@pytest.mark.asyncio
+async def test_termino_no_encontrado_distingue_pais_por_pais() -> None:
+    executor = _FakeExecutor(
+        por_vista={
+            "query.v_process": [
+                {"country_code": "GT", "n": 253852},
+                {"country_code": "CR", "n": 12783},
+            ]
+        },
+        por_termino={"directa": [{"country_code": "GT", "n": 236201}]},
+    )
+    sql = (
+        "SELECT * FROM query.v_process WHERE country_code IN ('GT', 'CR') "
+        "AND procurement_method ILIKE '%directa%'"
+    )
+
+    d = await diagnose_empty_result(
+        executor, countries=["GT", "CR"], relations=PROCESS_ONLY, sql=sql  # type: ignore[arg-type]
+    )
+
+    assert d.warnings[0].details["terminos_sin_match"] == {"directa": ["CR"]}
+    assert "Guatemala" not in d.warnings[0].message_es

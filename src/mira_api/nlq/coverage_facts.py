@@ -135,6 +135,48 @@ def extract_queried_date_range(
     return None, None, None
 
 
+#: Columnas de texto libre de query.v_process contra las que el prompt instruye
+#: buscar una categoria o modalidad (regla 6c para categoria de producto, y
+#: procurement_method para modalidad de contratacion). Cada fuente escribe su
+#: propio vocabulario ahi -- Guatemala dice "Compra Directa...", Costa Rica
+#: nunca usa la palabra "directa" -- asi que un ILIKE que no calza con NINGUNA
+#: fila de un pais no significa que falten datos, solo que ese pais no usa ese
+#: nombre.
+_TEXT_SEARCH_COLUMNS = frozenset({"procurement_method", "title", "description"})
+
+
+def extract_text_search_predicates(sql: str) -> list[tuple[str, str]]:
+    """Extrae (columna, termino) de cada ILIKE del WHERE sobre una columna de
+    _TEXT_SEARCH_COLUMNS. El termino sale sin los '%' de comodin.
+
+    Solo lee el arbol sintactico -- igual que extract_queried_date_range, no
+    ejecuta nada. Si el SQL no parsea, devuelve una lista vacia: un fallo aca
+    no puede tumbar una respuesta que ya esta lista.
+    """
+    if not sql:
+        return []
+    try:
+        tree = sqlglot.parse_one(sql, dialect="postgres")
+    except Exception:
+        return []
+
+    encontrados: list[tuple[str, str]] = []
+    for ilike in tree.find_all(exp.ILike):
+        columna = ilike.this
+        if not isinstance(columna, exp.Column):
+            continue
+        nombre_columna = columna.name.lower()
+        if nombre_columna not in _TEXT_SEARCH_COLUMNS:
+            continue
+        patron = ilike.expression
+        if not (isinstance(patron, exp.Literal) and patron.is_string):
+            continue
+        termino = str(patron.this).strip("%").strip()
+        if termino and (nombre_columna, termino) not in encontrados:
+            encontrados.append((nombre_columna, termino))
+    return encontrados
+
+
 @dataclass(frozen=True)
 class EmptyResultDiagnosis:
     warnings: list[Warning]
@@ -265,6 +307,67 @@ async def diagnose_empty_result(
                             "periodo_consultado": period_label,
                             "paises_fuera_de_rango": [c for c, _, _ in out_of_range_countries],
                         },
+                    )
+                ],
+                coverage=CoverageNote(countries=countries, rows_total=total_disponible),
+            )
+
+    # Revisar si el WHERE busca una categoria/modalidad en texto libre
+    # (procurement_method, title, description) que no calza con NINGUNA fila
+    # de alguno de los paises pedidos. Verificado en vivo (2026-08-27):
+    # "adjudicacion directa" en Costa Rica volvia vacio sin explicacion --
+    # CR tiene 12,783 procesos (el chequeo de entidad de arriba no dispara) y
+    # el periodo no estaba fuera de rango, pero CR nunca escribe la palabra
+    # "directa" en su procurement_method (usa "Procedimiento por Excepcion",
+    # etc.). Sin este chequeo, ese cero se ve identico a "no hay datos".
+    predicados = extract_text_search_predicates(sql)
+    if predicados and "query.v_process" in relations:
+        sin_match: dict[str, list[str]] = {}
+        for columna, termino in predicados:
+            sql_check = (
+                f"select country_code, count(*) as n from query.v_process "  # noqa: S608
+                f"where country_code = any(%(paises)s) and {columna} ilike %(patron)s "
+                f"group by country_code"
+            )
+            try:
+                rows = await executor.run(
+                    sql_check,
+                    max_rows=50,
+                    params={"paises": countries, "patron": f"%{termino}%"},
+                )
+            except Exception:  # noqa: BLE001 - un extra nunca puede tumbar la respuesta
+                continue
+            con_match = {str(row["country_code"]) for row in rows.rows if row["n"] > 0}
+            faltan = [p for p in countries if p not in con_match]
+            if faltan:
+                sin_match[termino] = faltan
+
+        if sin_match:
+            detalle = "; ".join(
+                f'"{termino}" en {", ".join(_country_name(p) for p in paises)}'
+                for termino, paises in sin_match.items()
+            )
+            mensaje = (
+                f"No se encontro nada relacionado con {detalle} en los datos "
+                "cargados. Puede que esa fuente use otro nombre para clasificar "
+                "esa categoria o modalidad de compra, no que falten datos en general."
+            )
+            detalle_en = "; ".join(
+                f'"{termino}" in {", ".join(_country_name(p) for p in paises)}'
+                for termino, paises in sin_match.items()
+            )
+            mensaje_en = (
+                f"Nothing related to {detalle_en} was found in the loaded data. "
+                "The source may classify that category or procurement method under "
+                "a different name, not that data is missing overall."
+            )
+            return EmptyResultDiagnosis(
+                warnings=[
+                    Warning(
+                        code="NO_MATCH_FOR_TERM",
+                        message_es=mensaje,
+                        message_en=mensaje_en,
+                        details={"terminos_sin_match": sin_match},
                     )
                 ],
                 coverage=CoverageNote(countries=countries, rows_total=total_disponible),
