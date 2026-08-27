@@ -15,4 +15,5 @@ def test_public_routes_are_not_version_prefixed(monkeypatch) -> None:
     assert "/query" in paths
     assert "/query/stream" in paths
     assert "/coverage" in paths
+    assert "/procedures" in paths
     assert not any(path.startswith("/v1/") for path in paths)

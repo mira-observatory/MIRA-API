@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
@@ -211,3 +212,53 @@ class CoverageSummary(BaseModel):
 class CoverageResponse(BaseModel):
     summary: CoverageSummary
     countries: list[CoverageCountry] = Field(default_factory=list)
+
+
+ProcessStatus = Literal[
+    "PLANNED",
+    "PUBLISHED",
+    "OPEN",
+    "EVALUATION",
+    "AWARDED",
+    "CONTRACTED",
+    "COMPLETED",
+    "CANCELLED",
+    "DESERTED",
+    "SUSPENDED",
+]
+
+
+class Procedure(BaseModel):
+    process_id: str
+    process_number: str | None = None
+    country_code: str
+    title: str | None = None
+    description: str | None = None
+    procurement_method: str | None = None
+    process_status: ProcessStatus | None = None
+    source_status: str | None = None
+    publication_date: datetime | None = None
+    closing_date: datetime | None = None
+    estimated_amount: Decimal | None = None
+    currency_code: str | None = None
+    source_system: str
+    source_url: str | None = None
+    data_quality_status: Literal["COMPLETE", "PARTIAL", "INVALID"]
+
+
+class ProcedureFilters(BaseModel):
+    q: str | None = None
+    countries: list[str] = Field(default_factory=list)
+    statuses: list[ProcessStatus] = Field(default_factory=list)
+    procurement_methods: list[str] = Field(default_factory=list)
+    published_from: date | None = None
+    published_to: date | None = None
+
+
+class ProceduresResponse(BaseModel):
+    items: list[Procedure] = Field(default_factory=list)
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    filters: ProcedureFilters

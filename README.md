@@ -231,6 +231,14 @@ constante sobre `web.countries` y `web.coverage_sources`. Usa su propio pool y
 el rol `mira_web`; no invoca modelos, no consume cuota y no pasa por el
 validador de SQL generado.
 
+### Catalogo de procedimientos
+
+`GET /procedures` lista `query.v_process` con SQL fijo y parametrizado. Admite
+busqueda textual (`q`), filtros repetibles de pais (`country`) y estado
+(`status`), busqueda parcial de modalidad (`procurement_method`), rango de
+publicacion (`published_from`, `published_to`) y paginacion (`page`,
+`page_size`). No invoca modelos ni consume cuota.
+
 Las tres conexiones del servicio tienen privilegios separados:
 
 | Variable | Rol | Acceso |
