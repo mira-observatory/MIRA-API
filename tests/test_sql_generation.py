@@ -82,6 +82,16 @@ def test_prompt_indica_buscar_categoria_de_compra_en_titulo_no_en_items() -> Non
     assert "filtra con ILIKE sobre title y/o description de query.v_process" in SQL_SYSTEM_PROMPT
 
 
+def test_prompt_fija_un_limit_estandar_para_rankings_ambiguos() -> None:
+    """Reportado en vivo (2026-08-27): la misma pregunta sin un numero
+    explicito ("que instituciones hicieron mas compras...") devolvia una
+    cantidad de filas distinta segun la sesion (10, 20, 50...) porque el
+    modelo elegia el LIMIT libremente. La regla 5c fija LIMIT 100 para que la
+    misma pregunta traiga siempre la misma cantidad de filas."""
+    assert "usa siempre LIMIT 100" in SQL_SYSTEM_PROMPT
+    assert "LIMIT 1 sigue siendo lo correcto" in SQL_SYSTEM_PROMPT
+
+
 @pytest.mark.asyncio
 async def test_acepta_sql_valido_en_el_primer_intento() -> None:
     client = _ScriptedClient(

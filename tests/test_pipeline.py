@@ -10,6 +10,7 @@ from mira_api.llm.client import Completion
 from mira_api.nlq.pipeline import (
     _infer_column_kind,
     _strip_internal_ids,
+    missing_country_warning,
     mixed_currency_warning,
     normalise_question,
     run_query,
@@ -747,6 +748,61 @@ def test_sin_aviso_si_la_tabla_no_trae_montos() -> None:
     rows = [{"country_code": "CR", "count": 10}]
 
     assert mixed_currency_warning(columns, rows, ["CR", "GT"]) is None
+
+
+# --- Aviso de pais ausente en un ranking SIN montos --------------------------
+
+
+def _count_columns() -> list[Column]:
+    return [
+        Column(name="country_code", kind="text"),
+        Column(name="name_normalised", kind="text"),
+        Column(name="cantidad", kind="number"),
+    ]
+
+
+def test_avisa_cuando_un_pais_pedido_no_aparece_en_un_conteo() -> None:
+    """El caso real (2026-08-27): "que instituciones hicieron mas compras por
+    adjudicacion directa" pidiendo GT+HN+CR+NI devolvio 49/50 filas de
+    Guatemala y 1 de Honduras -- Costa Rica y Nicaragua no aparecieron ni una
+    vez, sin aviso (mixed_currency_warning no corre porque no hay columna de
+    dinero). No es un error: GT escribe "Compra Directa..." en el 93% de sus
+    procesos, CR y NI nunca usan la palabra "directa"."""
+    rows = [
+        {"country_code": "GT", "name_normalised": "IGSS", "cantidad": 269816},
+        {"country_code": "HN", "name_normalised": "Secretaria de Infraestructura", "cantidad": 807},
+    ]
+
+    aviso = missing_country_warning(_count_columns(), rows, ["GT", "HN", "CR", "NI"])
+
+    assert aviso is not None
+    assert aviso.code == "MISSING_COUNTRY_IN_RESULT"
+    assert "CR" in aviso.details["paises_ausentes"]
+    assert "NI" in aviso.details["paises_ausentes"]
+    assert aviso.details["paises_presentes"] == ["GT", "HN"]
+
+
+def test_sin_aviso_de_pais_ausente_si_todos_aparecen() -> None:
+    rows = [
+        {"country_code": "GT", "name_normalised": "IGSS", "cantidad": 100},
+        {"country_code": "HN", "name_normalised": "SIT", "cantidad": 50},
+    ]
+
+    assert missing_country_warning(_count_columns(), rows, ["GT", "HN"]) is None
+
+
+def test_sin_aviso_de_pais_ausente_con_un_solo_pais_pedido() -> None:
+    rows = [{"country_code": "CR", "name_normalised": "ICE", "cantidad": 5}]
+
+    assert missing_country_warning(_count_columns(), rows, ["CR"]) is None
+
+
+def test_missing_country_warning_no_corre_si_hay_columna_de_dinero() -> None:
+    """Mutuamente excluyente con mixed_currency_warning por construccion: esa
+    ya cubre el caso de pais ausente cuando SI hay montos de por medio."""
+    rows = [{"country_code": "CR", "awarded_amount": 900, "currency_code": "CRC"}]
+
+    assert missing_country_warning(_money_columns(), rows, ["CR", "GT"]) is None
 
 
 # --- Ocultar identificadores internos de la tabla que ve la persona --------

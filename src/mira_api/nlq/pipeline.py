@@ -302,6 +302,64 @@ def mixed_currency_warning(
     return None
 
 
+def missing_country_warning(
+    columns: list[Column],
+    rows: list[dict[str, object]],
+    requested_countries: list[str],
+) -> Warning | None:
+    """Avisa cuando un ranking o conteo SIN montos deja fuera un pais completo.
+
+    Verificado en vivo (2026-08-27): "que instituciones hicieron mas compras
+    por adjudicacion directa" pidiendo GT+HN+CR+NI devolvio 49 de 50 filas de
+    Guatemala y 1 de Honduras -- Costa Rica y Nicaragua no aparecieron ni una
+    vez, sin ningun aviso. No es un error de la consulta: Guatemala escribe
+    literalmente "Compra Directa..." como nombre de modalidad en el 93% de
+    sus procesos, mientras que Costa Rica y Nicaragua nunca usan la palabra
+    "directa" en su procurement_method (usan "Procedimiento por Excepcion",
+    "Contratacion Menor", etc.). Pero quien pidio 4 paises no tiene como
+    notar, mirando la tabla, que dos quedaron completamente afuera.
+
+    A proposito NO es el mismo aviso que mixed_currency_warning: ese existe
+    porque comparar montos en monedas distintas miente (un numero mayor no es
+    necesariamente un monto mayor). Un conteo por pais no tiene ese problema
+    -- 10 adjudicaciones en Guatemala SI son comparables con 10 en Costa Rica
+    -- asi que este aviso solo corre cuando NO hay columna de dinero de por
+    medio (mixed_currency_warning ya cubre el caso con dinero).
+    """
+    if any(column.kind == "money" for column in columns):
+        return None
+    if not any(column.name == "country_code" for column in columns):
+        return None
+
+    presentes = {
+        str(row["country_code"]).upper() for row in rows if isinstance(row.get("country_code"), str)
+    }
+    pedidos = {c.upper() for c in requested_countries}
+    faltantes = sorted(pedidos - presentes) if presentes else []
+
+    if len(pedidos) >= 2 and faltantes:
+        return Warning(
+            code="MISSING_COUNTRY_IN_RESULT",
+            message_es=(
+                f"Se preguntaron varios paises pero el resultado solo trae datos de "
+                f"{', '.join(sorted(presentes))}: no aparece {', '.join(faltantes)}. "
+                "Puede ser que ese pais no tenga registros que calcen con lo pedido "
+                "-- por ejemplo, con este nombre de categoria o modalidad -- y no "
+                "que le falten datos en general."
+            ),
+            message_en=(
+                f"Several countries were asked about but the result only holds data "
+                f"for {', '.join(sorted(presentes))}: {', '.join(faltantes)} is "
+                "missing. That can mean that country has no records matching what "
+                "was asked -- for example, under this category or procurement-method "
+                "name -- not that it lacks data in general."
+            ),
+            details={"paises_ausentes": faltantes, "paises_presentes": sorted(presentes)},
+        )
+
+    return None
+
+
 async def _charge_global_budget(
     log_executor: LogExecutor, *, model: str, usage: Usage
 ) -> float:
@@ -574,9 +632,42 @@ async def run_query(
         mezcla = mixed_currency_warning(columns, rows_result.rows, countries)
         if mezcla is not None:
             warnings.append(mezcla)
+        # Mutuamente excluyente con mixed_currency_warning por construccion:
+        # esta solo corre cuando NO hay columna de dinero de por medio.
+        falta_pais = missing_country_warning(columns, rows_result.rows, countries)
+        if falta_pais is not None:
+            warnings.append(falta_pais)
         sin_normalizar = unnormalised_item_warning(result.validated.relations)
         if sin_normalizar is not None:
             warnings.append(sin_normalizar)
+
+    if (
+        rows_result.row_count > 0
+        and not rows_result.truncated
+        and result.validated.effective_limit > 1
+        and rows_result.row_count >= result.validated.effective_limit
+    ):
+        # El tope global (rows_result.truncated) no dice nada aqui: un ranking
+        # ambiguo (regla 5c) corta en LIMIT 100, muy por debajo del tope de
+        # seguridad de 500, y sin este aviso esas otras filas desaparecen sin
+        # dejar rastro. LIMIT 1 queda afuera a proposito -- ahi se pidio un
+        # solo ganador, no una lista, y "hay mas" no tiene sentido como aviso.
+        warnings.append(
+            Warning(
+                code="LIMIT_MAY_HIDE_ROWS",
+                message_es=(
+                    f"Se muestran {rows_result.row_count} filas: puede haber mas. "
+                    "Pedi ver mas filas, o hace la pregunta mas especifica (un pais, "
+                    "un periodo, un top mas chico) para acotar el resultado."
+                ),
+                message_en=(
+                    f"Showing {rows_result.row_count} rows: there may be more. Ask "
+                    "to see more rows, or make the question more specific (one "
+                    "country, one period, a smaller top-N) to narrow the result."
+                ),
+                details={"limit": result.validated.effective_limit},
+            )
+        )
 
     if rows_result.row_count > 0 and rows_result.truncated:
         # Se alcanzo el tope de filas: lo que se ve es un pedazo, y quien

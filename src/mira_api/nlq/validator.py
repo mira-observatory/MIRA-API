@@ -85,6 +85,11 @@ class ValidatedSql:
     limit_injected: bool
     #: Si hubo que agregar NULLS LAST a algun ORDER BY descendente.
     nulls_last_injected: bool = False
+    #: El LIMIT que de verdad quedo en el SQL despues de _enforce_limit -- el
+    #: del modelo si era razonable, o max_rows si se inyecto o se recorto.
+    #: Sirve para saber si el resultado se corto en ESTE limite (que puede ser
+    #: mucho menor que max_rows), no solo en el tope global de seguridad.
+    effective_limit: int = 0
 
 
 #: Vistas que traen country_code. Si el SQL las toca, tiene que filtrar por
@@ -150,11 +155,15 @@ def validate(sql: str, *, max_rows: int, countries: list[str]) -> ValidatedSql:
 
     limit_injected = _enforce_limit(tree, max_rows)
     nulls_last_injected = _enforce_nulls_last(tree)
+    # _enforce_limit garantiza que a esta altura el arbol siempre tiene un
+    # LIMIT numerico -- lo dejo como estaba si ya era razonable, o lo puso el.
+    effective_limit = int(tree.args["limit"].expression.name)
     return ValidatedSql(
         sql=tree.sql(dialect="postgres"),
         relations=frozenset(relations),
         limit_injected=limit_injected,
         nulls_last_injected=nulls_last_injected,
+        effective_limit=effective_limit,
     )
 
 

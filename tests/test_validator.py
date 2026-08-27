@@ -60,6 +60,29 @@ def test_respeta_limit_razonable() -> None:
     assert not result.limit_injected
 
 
+def test_effective_limit_refleja_el_limit_que_de_verdad_quedo() -> None:
+    """effective_limit tiene que ser el LIMIT final, no siempre max_rows: un
+    ranking con LIMIT 100 (regla 5c del prompt) se corta ahi, mucho antes del
+    tope global de 500 -- pipeline.py usa este numero, no max_rows, para saber
+    si el resultado se corto en ESE limite mas chico."""
+    sql = "select * from query.v_process where country_code = 'CR' limit 100"
+    result = validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES)
+    assert not result.limit_injected
+    assert result.effective_limit == 100
+
+
+def test_effective_limit_cuando_se_inyecta() -> None:
+    sql = "select * from query.v_process where country_code = 'CR'"
+    result = validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES)
+    assert result.effective_limit == MAX_ROWS
+
+
+def test_effective_limit_cuando_se_recorta() -> None:
+    sql = "select * from query.v_process where country_code = 'CR' limit 100000"
+    result = validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES)
+    assert result.effective_limit == MAX_ROWS
+
+
 @pytest.mark.parametrize(
     "sql",
     [

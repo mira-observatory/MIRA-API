@@ -54,6 +54,15 @@ o un conteo (COUNT), filtra el periodo completo pedido (por ejemplo todo el anio
 y deja que ORDER BY ... LIMIT o COUNT(*) entreguen el resultado. Solo si la \
 pregunta pide un listado sin limite ni agregacion que devuelva demasiadas filas, \
 acota al mes mas reciente disponible del periodo pedido.
+5c. Si el ranking de la regla 5b no trae un numero explicito ("los 10 con mas \
+adjudicaciones", "las 5 mas caras"), usa siempre LIMIT 100 -- ni un numero \
+mas chico ni uno distinto cada vez. La misma pregunta hecha dos veces tiene \
+que devolver la misma cantidad de filas: un LIMIT elegido al azar (10, 20, \
+50...) hace que la misma pregunta en dos sesiones distintas parezca dar \
+respuestas distintas, cuando lo unico que cambio fue cuanto se decidio \
+mostrar. Esto NO aplica a una pregunta en singular con un solo ganador \
+("cual es la que mas...", "que institucion compro mas") -- ahi LIMIT 1 \
+sigue siendo lo correcto, porque se pidio una sola fila, no una lista.
 6. El monto adjudicado vive en query.v_awards, no en query.v_process. Para \
 compras, gasto, adjudicaciones, montos pagados/adjudicados o rankings por \
 monto, une query.v_process con query.v_awards usando process_id y selecciona \
