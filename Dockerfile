@@ -37,4 +37,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 # limite por IP (ver api/rate_limit.py). Confiar en '*' aqui es correcto
 # porque el contenedor no recibe trafico que no haya pasado primero por el
 # borde de Render -- no es un servidor con IP publica propia.
-CMD ["sh", "-c", "uvicorn mira_api.main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1 --proxy-headers --forwarded-allow-ips='*'"]
+# exec entrega las senales de apagado a Uvicorn para cerrar solicitudes y pools.
+# En un Droplet, publicar solo en loopback y sobrescribir las cabeceras en
+# el proxy de entrada (deploy/nginx-api.conf).
+CMD ["sh", "-c", "exec uvicorn mira_api.main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1 --proxy-headers --forwarded-allow-ips='*'"]

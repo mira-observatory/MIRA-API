@@ -166,6 +166,11 @@ en `src/mira_api/evals/cases.py`.
 
 ## Despliegue
 
+Para el Droplet de DigitalOcean, usar [Docker Compose](docs/digitalocean.md).
+Incluye configuracion externa, comprobacion de conexiones y proxy para SSE.
+
+### Render
+
 El `Dockerfile` define como se construye y `render.yaml` como corre. **Ninguna
 credencial vive en el repositorio**: los secretos van marcados `sync: false`,
 que le dice a Render que ese valor se carga a mano en el panel.

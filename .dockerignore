@@ -1,0 +1,12 @@
+# Solo enviar al constructor lo que necesita el Dockerfile.
+*
+!pyproject.toml
+!README.md
+!src/
+!src/**
+!scripts/
+!scripts/**
+**/__pycache__/
+**/*.py[cod]
+**/.env
+**/.env.*

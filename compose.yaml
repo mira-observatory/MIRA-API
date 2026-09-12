@@ -1,0 +1,38 @@
+name: mira-api
+
+services:
+  api:
+    image: mira-api:${MIRA_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 45s
+    env_file:
+      - .env.digitalocean
+    environment:
+      DATABASE_URL_QUERY: ${DATABASE_URL_QUERY:?Falta DATABASE_URL_QUERY}
+      DATABASE_URL_WEB: ${DATABASE_URL_WEB:?Falta DATABASE_URL_WEB}
+      DATABASE_URL_LOG: ${DATABASE_URL_LOG:?Falta DATABASE_URL_LOG}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?Falta ANTHROPIC_API_KEY}
+      TOKEN_HMAC_SECRET: ${TOKEN_HMAC_SECRET:?Falta TOKEN_HMAC_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS:?Falta CORS_ORIGINS}
+      PORT: "8080"
+    # Nginx del host es el unico punto de entrada publico.
+    ports:
+      - "127.0.0.1:8080:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
