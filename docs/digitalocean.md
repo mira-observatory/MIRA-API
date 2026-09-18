@@ -11,7 +11,9 @@ PostgreSQL permanece en `mira-db-prod`. El despliegue no modifica el esquema.
   procedimientos y estados verificados desde la red publica.
 - Consulta real a Anthropic y eventos SSE verificados con una pregunta de
   conteo de Guatemala. La respuesta informa que faltan datos cargados.
-- Dominio y HTTPS pendientes; esta direccion HTTP es para pruebas.
+- Desde el 18 de septiembre, acceso HTTPS a traves de la web:
+  `https://proyectomira.org/api` y `https://www.proyectomira.org/api`.
+  Swagger esta en `/api/docs`. La direccion HTTP por IP queda para pruebas.
 - Configuracion del servidor en `/opt/mira-api/.env.digitalocean`, fuera de
   la imagen y con permisos de lectura restringidos.
 
@@ -63,12 +65,20 @@ como sitio de Nginx segun la distribucion, revisar los sitios existentes,
 comprobar `sudo nginx -t` y recargar Nginx. Permitir HTTP/HTTPS en el firewall
 y mantener SSH disponible.
 
-La configuracion permite probar HTTP por IP. Para el chat publico, configurar
-dominio, certificado TLS y redireccion a HTTPS: las cookies son `Secure`.
-Actualizar `CORS_ORIGINS` con el origen exacto HTTPS de la web, sin barra final.
-Usar `COOKIE_SAMESITE=lax` entre subdominios HTTPS del mismo sitio, o `none`
-entre sitios distintos. Si se agrega otro proxy delante, revisar primero la
-cadena de confianza para conservar la IP real del visitante.
+`deploy/nginx-api.conf` conserva el acceso de prueba por IP.
+`deploy/nginx-web-gateway.conf`, instalado como sitio adicional, escucha solo
+en la VPC (`10.108.0.4:8081`) y admite exclusivamente al frontend
+(`10.108.0.2`). El frontend termina TLS, elimina el prefijo `/api` y reemplaza
+las cabeceras de IP antes de reenviar. El gateway privado conserva esa IP y
+el esquema HTTPS para Uvicorn; las solicitudes publicas directas siguen usando
+el proxy original, que descarta cabeceras proporcionadas por el visitante.
+
+En `.env.digitalocean` usar `UVICORN_ROOT_PATH=/api`,
+`CORS_ORIGINS=https://proyectomira.org,https://www.proyectomira.org` y
+`COOKIE_SAMESITE=lax`. `UVICORN_ROOT_PATH` lo lee Uvicorn del entorno y permite
+que Swagger genere URLs con el prefijo correcto. Los certificados y su
+renovacion se administran en el servidor frontend, segun el README de MIRA-WEB.
+La comunicacion entre los dos servidores usa HTTP dentro de la VPC.
 
 ## Operacion
 
