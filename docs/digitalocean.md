@@ -6,14 +6,14 @@ PostgreSQL permanece en `mira-db-prod`. El despliegue no modifica el esquema.
 ## Despliegue verificado el 11 de septiembre de 2026
 
 - Imagen instalada: `mira-api:cebfc72-do1`, en `/opt/mira-api`.
-- Entrada de prueba: `http://104.131.184.162`; documentacion en `/docs`.
+- Entrada inicial de prueba por IP retirada al completar HTTPS.
 - API saludable, conexiones de los tres roles y endpoints de cobertura,
   procedimientos y estados verificados desde la red publica.
 - Consulta real a Anthropic y eventos SSE verificados con una pregunta de
   conteo de Guatemala. La respuesta informa que faltan datos cargados.
 - Desde el 18 de septiembre, acceso HTTPS a traves de la web:
   `https://proyectomira.org/api` y `https://www.proyectomira.org/api`.
-  Swagger esta en `/api/docs`. La direccion HTTP por IP queda para pruebas.
+  Swagger esta en `/api/docs`. No hay entrada HTTP publica directa al backend.
 - Configuracion del servidor en `/opt/mira-api/.env.digitalocean`, fuera de
   la imagen y con permisos de lectura restringidos.
 
@@ -62,16 +62,16 @@ Anthropic. La cobertura inicial no contiene contrataciones cargadas.
 
 La API escucha en `127.0.0.1:8080` del host. Instalar `deploy/nginx-api.conf`
 como sitio de Nginx segun la distribucion, revisar los sitios existentes,
-comprobar `sudo nginx -t` y recargar Nginx. Permitir HTTP/HTTPS en el firewall
-y mantener SSH disponible.
+comprobar `sudo nginx -t` y recargar Nginx. Deshabilitar el sitio predeterminado
+de Nginx; el backend no debe escuchar en los puertos publicos 80/443.
+Mantener SSH disponible y permitir el puerto privado 8081 desde el frontend.
 
-`deploy/nginx-api.conf` conserva el acceso de prueba por IP.
-`deploy/nginx-web-gateway.conf`, instalado como sitio adicional, escucha solo
+`deploy/nginx-api.conf` es la unica configuracion del sitio y escucha solo
 en la VPC (`10.108.0.4:8081`) y admite exclusivamente al frontend
 (`10.108.0.2`). El frontend termina TLS, elimina el prefijo `/api` y reemplaza
 las cabeceras de IP antes de reenviar. El gateway privado conserva esa IP y
-el esquema HTTPS para Uvicorn; las solicitudes publicas directas siguen usando
-el proxy original, que descarta cabeceras proporcionadas por el visitante.
+el esquema HTTPS para Uvicorn. El acceso publico a la API pasa por el frontend;
+se eliminaron la entrada HTTP anterior y el archivo separado del gateway.
 
 En `.env.digitalocean` usar `UVICORN_ROOT_PATH=/api`,
 `CORS_ORIGINS=https://proyectomira.org,https://www.proyectomira.org` y
