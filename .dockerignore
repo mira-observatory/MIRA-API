@@ -1,6 +1,7 @@
 # Solo enviar al constructor lo que necesita el Dockerfile.
 *
 !pyproject.toml
+!requirements-production.txt
 !README.md
 !src/
 !src/**

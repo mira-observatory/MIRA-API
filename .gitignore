@@ -14,6 +14,9 @@ dist/
 .env.*
 !.env.example
 
+# Archivos temporales de despliegue; los scripts reutilizables van en deploy/.
+.deploy-tmp/
+
 !.vscode/
 .vscode/*
 !.vscode/tasks.json

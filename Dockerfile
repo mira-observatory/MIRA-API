@@ -1,11 +1,12 @@
-FROM python:3.12-slim AS builder
+# Revisar y actualizar el digest deliberadamente al actualizar la base.
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea AS builder
 
 WORKDIR /build
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md requirements-production.txt ./
 COPY src ./src
-RUN pip install --no-cache-dir --prefix=/install .
+RUN pip install --no-cache-dir --prefix=/install -c requirements-production.txt .
 
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
 
 # Un solo worker a proposito: el trabajo es I/O-bound y asi el pool de conexiones y
 # el cache en memoria no se fragmentan. Se escala con replicas, no con workers.

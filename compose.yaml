@@ -19,7 +19,7 @@ services:
       TOKEN_HMAC_SECRET: ${TOKEN_HMAC_SECRET:?Falta TOKEN_HMAC_SECRET}
       CORS_ORIGINS: ${CORS_ORIGINS:?Falta CORS_ORIGINS}
       PORT: "8080"
-    # Nginx del host es el unico punto de entrada publico.
+    # Nginx del host es la entrada privada desde el frontend.
     ports:
       - "127.0.0.1:8080:8080"
     read_only: true
