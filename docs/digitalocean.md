@@ -1,5 +1,8 @@
 # API en DigitalOcean: preparacion y recuperacion
 
+Los despliegues desde `main`, secretos de Actions y rollback se explican en
+[GitHub Actions](github-actions.md). Esta guia cubre el aprovisionamiento del host.
+
 Esta guia cubre MIRA-API. La [base y sus roles](https://github.com/byronalb146/MIRA-ETL/blob/main/docs/database_recovery.md)
 se preparan en MIRA-ETL; el [frontend y HTTPS](https://github.com/byronalb146/MIRA-WEB/blob/main/docs/operations-and-recovery.md),
 en MIRA-WEB.

@@ -1,53 +1,128 @@
-name: CI
-
+name: CI and DigitalOcean
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-
-    # Solo para T0.3: probar que el pool respeta permisos de solo lectura y que
-    # agotarlo no cuelga. No es el esquema `query` real de MIRA-ETL (ese vive en
-    # ese repo); las pruebas de integracion siembran su propio esquema minimo.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
+        ports: ['5432:5432']
         options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
     env:
       MIRA_TEST_DB_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/postgres
-
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          python-version: "3.12"
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
           cache: pip
+      - run: pip install -c requirements-production.txt -e '.[dev]'
+      - run: ruff check src tests
+      - run: mypy
+      - run: pytest -q
+      - run: bash -n deploy/*.sh
 
-      - name: Instalar dependencias
-        run: pip install -e ".[dev]"
+  image:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Construir y publicar imagen por commit
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:sha-$GITHUB_SHA"
+          docker build --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA"  -t "$image" .
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+          docker push "$image"
+          digest="$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')"
+          echo "image=$digest" >> "$GITHUB_OUTPUT"
+          printf '### Imagen publicada\n\n`%s`\n' "$digest" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Lint
-        run: ruff check src tests
-
-      - name: Tipos
-        run: mypy
-
-      # Las pruebas del validador de SQL no necesitan base de datos ni modelo de
-      # lenguaje: corren siempre y son la red de seguridad mas barata del servicio.
-      # Las de tests/test_pool_integration.py usan el servicio Postgres de arriba;
-      # fuera de CI se saltan solas si no existe MIRA_TEST_DB_ADMIN_URL.
-      - name: Pruebas
-        run: pytest -q
+  deploy:
+    needs: image
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: digitalocean-production
+    concurrency:
+      group: digitalocean-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Desplegar la imagen verificada
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          IMAGE: ${{ needs.image.outputs.image }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # No desplegar una ejecucion antigua si main ya avanzo.
+          head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test "$head" = "$GITHUB_SHA" || { echo 'main avanzo; usar su pipeline mas reciente.'; exit 1; }
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          key_dir="$(mktemp -d "$RUNNER_TEMP/mira-ssh.XXXXXXXX")"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$key_dir/key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$key_dir/known_hosts"
+          chmod 600 "$key_dir/key" "$key_dir/known_hosts"
+          ssh_options=(-i "$key_dir/key" -o BatchMode=yes -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$key_dir/known_hosts" -o IdentitiesOnly=yes
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
+          target="root@$DEPLOY_HOST"
+          remote=""
+          cleanup() {
+            if [[ "$remote" =~ ^/tmp/mira-api-release\.[a-zA-Z0-9]+$ ]]; then
+              ssh "${ssh_options[@]}" "$target" "rm -rf -- '$remote'" || true
+            fi
+            rm -rf -- "$key_dir"
+          }
+          trap cleanup EXIT
+          remote="$(ssh "${ssh_options[@]}" "$target" 'mktemp -d /tmp/mira-api-release.XXXXXXXX')"
+          [[ "$remote" =~ ^/tmp/mira-api-release\.[a-zA-Z0-9]+$ ]]
+          tar -czf "$key_dir/release.tar.gz" compose.yaml deploy
+          scp "${ssh_options[@]}" "$key_dir/release.tar.gz" "$target:$remote/release.tar.gz"
+          ssh "${ssh_options[@]}" "$target" "tar -xzf '$remote/release.tar.gz' -C '$remote'"
+          printf -v command 'bash %q apply %q %q %q' "$remote/deploy/release.sh" "$IMAGE" "$GITHUB_SHA" "$GITHUB_ACTOR"
+          printf '%s' "$GH_TOKEN" | ssh "${ssh_options[@]}" "$target" "$command"
+          printf '### Despliegue completado\n\nCommit: `%s`\n\nImagen: `%s`\n' \
+            "$GITHUB_SHA" "$IMAGE" >> "$GITHUB_STEP_SUMMARY"

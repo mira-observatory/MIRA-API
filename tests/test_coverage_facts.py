@@ -254,7 +254,10 @@ async def test_avisa_cuando_el_termino_no_calza_con_ningun_pais() -> None:
         por_vista={"query.v_process": [{"country_code": "CR", "n": 12783}]},
         por_termino={"directa": []},  # ningun pais tiene una fila que calce
     )
-    sql = "SELECT * FROM query.v_process WHERE country_code = 'CR' AND procurement_method ILIKE '%directa%'"
+    sql = (
+        "SELECT * FROM query.v_process WHERE country_code = 'CR' "
+        "AND procurement_method ILIKE '%directa%'"
+    )
 
     d = await diagnose_empty_result(
         executor, countries=["CR"], relations=PROCESS_ONLY, sql=sql  # type: ignore[arg-type]
@@ -274,7 +277,10 @@ async def test_sin_aviso_de_termino_si_el_pais_si_tiene_coincidencias() -> None:
         por_vista={"query.v_process": [{"country_code": "HN", "n": 196973}]},
         por_termino={"directa": [{"country_code": "HN", "n": 3192}]},
     )
-    sql = "SELECT * FROM query.v_process WHERE country_code = 'HN' AND procurement_method ILIKE '%directa%'"
+    sql = (
+        "SELECT * FROM query.v_process WHERE country_code = 'HN' "
+        "AND procurement_method ILIKE '%directa%'"
+    )
 
     d = await diagnose_empty_result(
         executor, countries=["HN"], relations=PROCESS_ONLY, sql=sql  # type: ignore[arg-type]
