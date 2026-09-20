@@ -16,11 +16,12 @@ from mira_api.api.schemas import (
 )
 
 PROCESS_STATUSES_SQL = """
-    select distinct
+    select
         process_status as value,
-        count(*) over (partition by process_status) as process_count
+        count(*) as process_count
     from query.v_process
     where process_status is not null
+    group by process_status
     order by value
 """
 
@@ -49,17 +50,28 @@ PROCEDURE_FILTER_SQL = """
 
 # Consulta constante: los filtros viajan ligados por psycopg y nunca se
 # interpolan en el SQL. No interviene el modelo ni el validador de SQL generado.
+# Contar por separado permite paginar por indice sin materializar los textos de
+# todos los procesos en una ventana. Ambas ramas usan el mismo snapshot SQL.
 PROCEDURES_SQL = f"""
     select
         p.process_id, p.process_number, p.country_code, p.title, p.description,
         p.procurement_method, p.process_status, p.source_status,
         p.publication_date, p.closing_date, p.estimated_amount, p.currency_code,
-        p.source_system, p.source_url, p.data_quality_status,
-        count(*) over () as total_count
-    from query.v_process p
-    {PROCEDURE_FILTER_SQL}
-    order by p.publication_date desc nulls last, p.process_id
-    limit %(page_size)s offset %(offset)s
+        p.source_system, p.source_url, p.data_quality_status, totals.total_count
+    from (
+        select p.process_id, p.publication_date
+        from query.v_process p
+        {PROCEDURE_FILTER_SQL}
+        order by p.publication_date desc nulls last, p.process_id
+        limit %(page_size)s offset %(offset)s
+    ) page
+    join query.v_process p on p.process_id = page.process_id
+    cross join (
+        select count(*) as total_count
+        from query.v_process p
+        {PROCEDURE_FILTER_SQL}
+    ) totals
+    order by page.publication_date desc nulls last, page.process_id
 """
 
 PROCEDURES_COUNT_SQL = f"""

@@ -136,3 +136,40 @@ imagenes en un registry/respaldo permite recuperar un artefacto exacto.
 La auditoria reconstruyo la imagen desde fuentes limpias y verifico dependencias
 y configuracion; falta ensayar el bootstrap completo en un Droplet nuevo.
 Publicar estos cambios en Git es necesario para completar el traspaso al equipo.
+
+## Diagnostico del catalogo y del chat (19/09/2026)
+
+`/healthz` confirma que el proceso responde; no prueba una consulta de catalogo
+ni autentica contra Anthropic. Verificar tambien `/procedures`,
+`/procedures/statuses` y una pregunta de prueba despues de desplegar.
+
+El catalogo usa SQL fijo y no necesita una clave de IA. Con mas de 1.25 millones
+de procesos, las ventanas `count(*) over (...)` provocaron cancelaciones por el
+limite de 8 segundos. La correccion agrupa los estados directamente y separa
+la pagina del conteo exacto dentro de una misma sentencia y snapshot. Conserva
+filtros, orden, paginacion y total exacto; no aumenta el timeout.
+
+Los indices necesarios y su instalacion en bases existentes pertenecen a
+MIRA-ETL: ver `sql/002_indexes_and_views.sql` y su guia `docs/digitalocean.md`.
+Aplicarlos antes de desplegar la API corregida.
+
+El error del chat observado ese dia fue distinto: Anthropic rechazo la clave
+con HTTP 401 (`API key is invalid`). Reemplazar `ANTHROPIC_API_KEY` en el entorno
+del servidor y recrear el contenedor con Compose; un simple `restart` no aplica
+cambios del archivo de entorno. No guardar claves en Git ni en capturas/logs.
+
+Version desplegada: `mira-api:20260919-catalog1`. La pagina localiza primero los
+identificadores con el indice y despues lee los textos de las filas visibles,
+tambien al saltar a paginas avanzadas. Se uso el Dockerfile y el archivo de
+dependencias fijadas del repositorio, conservando el entorno del servidor.
+
+Validacion: 261 pruebas pasaron, cuatro quedaron omitidas y se excluyo la prueba
+de concurrencia de cuotas que necesita una BD externa (su conexion local fallo
+por restricciones de red). Pasaron las cuatro pruebas del catalogo y Ruff.
+Se probaron ademas los endpoints reales con PostgreSQL de produccion: primera
+y segunda pagina, pais, estado, fechas, texto, numero, pagina avanzada y cero
+coincidencias. El dominio publico devolvio HTTP 200 para el catalogo, sus diez
+estados, Honduras y la busqueda `medicamentos` (7,752 coincidencias en unos
+2.5 segundos). El total observado fue 1,257,847 procedimientos. Estos tiempos
+dependen del filtro y de la carga; no garantizan que toda busqueda amplia o
+de muy pocos caracteres termine dentro del limite de ocho segundos.

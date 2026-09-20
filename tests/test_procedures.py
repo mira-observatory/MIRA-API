@@ -7,7 +7,6 @@ import pytest
 
 from mira_api.db.procedures import (
     PROCEDURES_SQL,
-    PROCESS_STATUSES_SQL,
     _contains_pattern,
     fetch_procedures,
     fetch_process_statuses,
@@ -143,4 +142,3 @@ async def test_status_catalog_comes_from_distinct_database_values() -> None:
 
     assert [status.value for status in result.statuses] == ["AWARDED", "OPEN"]
     assert result.statuses[0].process_count == 20
-    assert "select distinct" in PROCESS_STATUSES_SQL.lower()
