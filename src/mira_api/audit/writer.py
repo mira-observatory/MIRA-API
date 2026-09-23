@@ -1,19 +1,23 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
+from uuid import UUID, uuid4
 
 from mira_api.audit.outcomes import Outcome
-from mira_api.db.log_executor import LogExecutor
+from mira_api.db.log_executor import TRANSIENT_LOG_ERRORS, LogExecutor, LogTransaction
 from mira_api.nlq.sql_generation import GenerationAttempt
 
 _INSERT_QUERY_LOG_SQL = """
     insert into analytics.query_log
         (subject_key, question_text, response_text, outcome, attempt_count,
-         total_latency_ms, prompt_version, app_version, model_used)
+         total_latency_ms, prompt_version, app_version, model_used,
+         query_id, error_stage, error_type)
     values
         (%(subject_key)s, %(question_text)s, %(response_text)s, %(outcome)s,
          %(attempt_count)s, %(total_latency_ms)s, %(prompt_version)s, %(app_version)s,
-         %(model_used)s)
+         %(model_used)s, %(query_id)s, %(error_stage)s, %(error_type)s)
+    on conflict (query_id) do update set query_id = excluded.query_id
     returning id
 """
 
@@ -24,6 +28,12 @@ _INSERT_QUERY_ATTEMPT_SQL = """
     values
         (%(query_log_id)s, %(attempt_number)s, %(generated_sql)s, %(outcome)s,
          %(rejection_rule)s, %(rejection_detail)s, %(row_count)s)
+    on conflict (query_log_id, attempt_number) do update set
+        generated_sql = excluded.generated_sql,
+        outcome = excluded.outcome,
+        rejection_rule = excluded.rejection_rule,
+        rejection_detail = excluded.rejection_detail,
+        row_count = excluded.row_count
 """
 
 
@@ -41,9 +51,14 @@ class QueryLogRecord:
     prompt_version: str
     app_version: str
     model_used: str
+    query_id: UUID = field(default_factory=uuid4)
+    error_stage: str | None = None
+    error_type: str | None = None
 
 
-async def write_query_log(log_executor: LogExecutor, record: QueryLogRecord) -> int:
+async def write_query_log(
+    log_executor: LogExecutor | LogTransaction, record: QueryLogRecord
+) -> int:
     row = await log_executor.fetch_one(
         _INSERT_QUERY_LOG_SQL,
         {
@@ -56,6 +71,9 @@ async def write_query_log(log_executor: LogExecutor, record: QueryLogRecord) -> 
             "prompt_version": record.prompt_version,
             "app_version": record.app_version,
             "model_used": record.model_used,
+            "query_id": record.query_id,
+            "error_stage": record.error_stage,
+            "error_type": record.error_type,
         },
     )
     assert row is not None
@@ -63,7 +81,7 @@ async def write_query_log(log_executor: LogExecutor, record: QueryLogRecord) -> 
 
 
 async def write_query_attempts(
-    log_executor: LogExecutor,
+    log_executor: LogExecutor | LogTransaction,
     *,
     query_log_id: int,
     attempts: list[GenerationAttempt],
@@ -98,15 +116,21 @@ async def write_audit_log(
     attempts: list[GenerationAttempt],
     final_row_count: int | None,
 ) -> None:
-    """Escribe query_log y sus query_attempt en la misma llamada -- lo que se
-    programa como tarea de fondo desde el pipeline (T4.x: la auditoria nunca
-    debe hacer esperar al usuario por su respuesta)."""
-    query_log_id = await write_query_log(log_executor, record)
-    if attempts:
-        await write_query_attempts(
-            log_executor,
-            query_log_id=query_log_id,
-            attempts=attempts,
-            final_outcome=record.outcome,
-            final_row_count=final_row_count,
-        )
+    """Confirma padre e intentos juntos. Reintentos transitorios idempotentes
+    por query_id, incluso si se perdio la conexion al recibir el COMMIT."""
+    for attempt_no in range(3):
+        try:
+            async with log_executor.transaction() as transaction:
+                query_log_id = await write_query_log(transaction, record)
+                await write_query_attempts(
+                    transaction,
+                    query_log_id=query_log_id,
+                    attempts=attempts,
+                    final_outcome=record.outcome,
+                    final_row_count=final_row_count,
+                )
+            return
+        except TRANSIENT_LOG_ERRORS:
+            if attempt_no == 2:
+                raise
+            await asyncio.sleep(0.05 * (attempt_no + 1))

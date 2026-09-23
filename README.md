@@ -285,7 +285,8 @@ la longitud de la pregunta ni de un error de SQL, de red o de base de datos.
 Antes de desplegar esta version de la API, aplicar en la base existente
 `MIRA-ETL/sql/001_init.sql` y `MIRA-ETL/sql/002_indexes_and_views.sql` con el
 rol administrador. El primero define las tablas y el segundo actualiza los
-CHECK de auditoria tambien en bases existentes, sin modificar sus registros. Desplegar tambien MIRA-WEB para mostrar
+CHECK de auditoria tambien en bases existentes, conservando el historial.
+Desplegar tambien MIRA-WEB para mostrar
 los mensajes de aclaracion en espanol e ingles. El catalogo de evaluaciones
 incluye la consulta abierta, su reformulacion especifica y una intencion sin
 contexto; `python -m mira_api.evals.runner` los verifica contra el modelo y la
@@ -293,12 +294,15 @@ base configurados (consume llamadas reales).
 
 ## Adjudicaciones validas por defecto
 
-`query.v_awards` filtra antes de ordenar, contar o limitar: solo procesos
-`AWARDED`, `CONTRACTED` o `COMPLETED`, calidad `COMPLETE`/`PARTIAL` y
-normalizacion `PROCESSED`. Excluye montos negativos y estados individuales
-publicados distintos de `active`/`complete`. Cuando la fuente no publica el
-estado individual, se usa el estado del proceso; no se inventa uno activo.
-Esto no acredita pago ni ejecucion completada.
+`query.v_awards` filtra antes de ordenar, contar o limitar segun el estado de
+la adjudicacion publicado por la fuente (`award_status`): `active`/`complete`.
+Un procedimiento cancelado, desierto o suspendido tambien queda excluido.
+Si la fuente no publica el estado individual, se usa el estado del procedimiento
+(`AWARDED`, `CONTRACTED` o `COMPLETED`) como evidencia disponible.
+`data_quality_status` y `normalisation_status` describen el ETL y NO deciden
+si una adjudicacion esta vigente o cancelada. Esto no acredita pago ni ejecucion
+completada. Las consultas explicitas sobre canceladas o fallidas usan
+`query.v_awards_all` con el estado que se pide.
 
 El ETL conserva `award_status` por adjudicacion, incluso si el mismo proceso
 contiene adjudicaciones activas y canceladas. `query.v_awards_all` permite
@@ -315,3 +319,17 @@ antes de desplegar ETL/API. Verificar los permisos SELECT de `mira_query` para
 la nueva vista segun `MIRA-ETL/docs/database_security.md`, y reiniciar la API
 para recargar el diccionario. No se requiere una nueva descarga para los
 estados recuperables por identificador de adjudicacion desde el payload.
+
+## Registro de errores y actualizacion de la base
+
+La auditoria guarda la consulta y sus intentos en una sola transaccion y espera
+su COMMIT antes de terminar la respuesta. `query_id` coincide con la respuesta
+JSON/SSE; `outcome`, `error_stage` y `error_type` distinguen aclaraciones,
+rechazos SQL, errores de BD, del modelo y fallos internos. Los reintentos de
+escritura usan ese identificador para no duplicar registros. Si la propia BD
+de auditoria falla, queda `audit_write_failed` en los logs del servicio: no se
+afirma que el registro este guardado en PostgreSQL.
+
+Los pasos de aplicacion y comprobacion para DigitalOcean estan en
+[MIRA-ETL/docs/query-audit-update.md](../MIRA-ETL/docs/query-audit-update.md).
+No se aplican migraciones automaticamente al iniciar la API.

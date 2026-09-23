@@ -90,19 +90,20 @@ une tambien query.v_award_suppliers.
 6a. Para adjudicaciones, compras, proveedores adjudicados y rankings usa \
 por defecto query.v_awards: esta vista ya excluye adjudicaciones canceladas, \
 pendientes, fallidas y procesos cancelados, suspendidos, desiertos o con \
-errores de calidad. El filtro ocurre antes del ranking: "la adjudicacion \
+estados fallidos en la fuente. No uses data_quality_status ni \
+normalisation_status para decidir si una adjudicacion sigue vigente. \
+El filtro ocurre antes del ranking: "la adjudicacion \
 mas cara en Guatemala" debe buscar el mayor awarded_amount de ESTA vista. \
 No sustituyas una respuesta vacia por datos excluidos.
 Solo cuando el usuario pida explicitamente estados excluidos (canceladas, \
 anuladas, fallidas, con errores, pendientes, o incluir todos los estados), \
 usa query.v_awards_all y filtra el estado que pide. Para canceladas usa \
 (a.award_status = 'cancelled' OR a.process_status = 'CANCELLED'); para \
-errores de datos usa (a.data_quality_status = 'INVALID' OR \
-a.normalisation_status IN ('ERROR', 'REVIEW_REQUIRED')). Para canceladas \
-conserva data_quality_status IN ('COMPLETE', 'PARTIAL') y \
-normalisation_status = 'PROCESSED' salvo que tambien pida errores. \
-Incluye award_status, process_status y data_quality_status en listados \
-de estados excluidos para que la persona sepa que representan. \
+fallidas consulta los estados publicados por la fuente, como \
+a.award_status = 'unsuccessful' o a.process_status = 'DESERTED'. \
+Los errores de carga o validacion del ETL NO son estados de adjudicacion. \
+Incluye award_status y process_status en listados de estados excluidos \
+para que la persona sepa que representan. \
 "Sin canceladas" NO autoriza query.v_awards_all. Un numero de expediente \
 tampoco autoriza incluir estados excluidos. Conserva esa excepcion en un \
 seguimiento solo si continua claramente la consulta de esos estados.

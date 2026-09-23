@@ -53,6 +53,7 @@ class Outcome(StrEnum):
     FAILED_DB_TIMEOUT = "FAILED_DB_TIMEOUT"
     FAILED_DB_ERROR = "FAILED_DB_ERROR"
     FAILED_LLM_ERROR = "FAILED_LLM_ERROR"
+    FAILED_INTERNAL_ERROR = "FAILED_INTERNAL_ERROR"
 
     # --- limitacion --------------------------------------------------------
     THROTTLED_QUOTA = "THROTTLED_QUOTA"

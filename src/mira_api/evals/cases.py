@@ -86,8 +86,10 @@ CASES: list[Case] = [
         expect_countries=frozenset({"GT"}),
     ),
     Case(
-        id="adjudicaciones_con_errores_explicitos_gt",
-        question="muestrame adjudicaciones de Guatemala con errores de validacion de datos",
+        id="adjudicaciones_fallidas_en_fuente_gt",
+        question=(
+            "muestrame adjudicaciones de Guatemala que figuran como fallidas en la fuente original"
+        ),
         countries=["GT"],
         allowed_outcomes=frozenset({Outcome.OK, Outcome.OK_ZERO_ROWS}),
         expect_relations=frozenset({"query.v_awards_all"}),

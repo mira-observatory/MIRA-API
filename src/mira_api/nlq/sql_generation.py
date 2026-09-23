@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from mira_api.audit.outcomes import Outcome
-from mira_api.llm.client import ClaudeClient
+from mira_api.llm.client import ClaudeApiError, ClaudeClient, ClaudeRefusal
 from mira_api.nlq.prompts import (
     SQL_SYSTEM_PROMPT,
     SQL_USER_PROMPT,
@@ -24,9 +24,7 @@ _CLARIFICATION_OUTCOMES = {
 class NeedsClarification(Exception):
     """El modelo pide detalle antes de generar SQL; no es un fallo tecnico."""
 
-    def __init__(
-        self, outcome: Outcome, usage: Usage, attempts: list[GenerationAttempt]
-    ) -> None:
+    def __init__(self, outcome: Outcome, usage: Usage, attempts: list[GenerationAttempt]) -> None:
         super().__init__(outcome.value)
         self.outcome = outcome
         self.usage = usage
@@ -58,6 +56,21 @@ class GenerationFailed(Exception):
         self.outcome = last_rejection.outcome
         self.rule = last_rejection.rule
         self.detail = last_rejection.detail
+        self.usage = usage
+        self.attempts = attempts
+
+
+class ModelFailed(Exception):
+    """Conserva los intentos previos si el modelo falla durante un reintento."""
+
+    def __init__(
+        self,
+        cause: ClaudeApiError | ClaudeRefusal,
+        usage: Usage,
+        attempts: list[GenerationAttempt],
+    ) -> None:
+        super().__init__(type(cause).__name__)
+        self.cause = cause
         self.usage = usage
         self.attempts = attempts
 
@@ -185,9 +198,12 @@ async def generate_validated_sql(
     usage = Usage()
 
     for attempt_no in range(1, max_attempts + 1):
-        completion = await client.complete_text(
-            model=model, system=system, messages=messages, max_tokens=max_tokens
-        )
+        try:
+            completion = await client.complete_text(
+                model=model, system=system, messages=messages, max_tokens=max_tokens
+            )
+        except (ClaudeApiError, ClaudeRefusal) as err:
+            raise ModelFailed(err, usage, attempts) from err
         usage = usage + Usage(
             input_tokens=completion.input_tokens,
             output_tokens=completion.output_tokens,
@@ -231,9 +247,7 @@ async def generate_validated_sql(
             messages.append(
                 {
                     "role": "user",
-                    "content": SQL_VALIDATION_RETRY_PROMPT.format(
-                        rule=err.rule, detail=err.detail
-                    ),
+                    "content": SQL_VALIDATION_RETRY_PROMPT.format(rule=err.rule, detail=err.detail),
                 }
             )
             continue

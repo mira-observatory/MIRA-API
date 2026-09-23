@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 import pytest
 
 from mira_api.audit.outcomes import Outcome
@@ -12,6 +14,10 @@ class _FakeLogExecutor:
         self.fetch_calls: list[tuple[str, dict]] = []
         self.execute_calls: list[tuple[str, dict]] = []
         self._next_id = 1
+
+    @asynccontextmanager
+    async def transaction(self):
+        yield self
 
     async def fetch_one(self, sql: str, params: dict | None = None) -> dict | None:
         self.fetch_calls.append((sql, params or {}))
@@ -123,3 +129,26 @@ async def test_write_audit_log_sin_intentos_no_escribe_query_attempt() -> None:
 
     assert len(log_executor.fetch_calls) == 1
     assert log_executor.execute_calls == []
+
+
+@pytest.mark.asyncio
+async def test_transient_connection_failure_retries_the_same_record() -> None:
+    from psycopg import OperationalError
+
+    class FlakyLog(_FakeLogExecutor):
+        tries = 0
+
+        @asynccontextmanager
+        async def transaction(self):
+            self.tries += 1
+            if self.tries < 3:
+                raise OperationalError("temporary connection failure")
+            yield self
+
+    log = FlakyLog()
+    record = _record(outcome=Outcome.FAILED_DB_TIMEOUT)
+    await write_audit_log(log, record=record, attempts=[], final_row_count=None)
+    assert log.tries == 3
+    assert len(log.fetch_calls) == 1
+    assert log.fetch_calls[0][1]["query_id"] == record.query_id
+    assert log.fetch_calls[0][1]["outcome"] == "FAILED_DB_TIMEOUT"

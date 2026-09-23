@@ -11,9 +11,9 @@ from uuid import uuid4
 from mira_api.api.schemas import Column, CoverageNote, QueryRequest, QueryResponse, Warning
 from mira_api.audit.outcomes import Outcome
 from mira_api.audit.writer import QueryLogRecord, write_audit_log
-from mira_api.db.executor import DatabaseError, QueryTimeout, ReadOnlyExecutor, Rows
+from mira_api.db.executor import DatabaseError, DatabaseTimeoutErrors, ReadOnlyExecutor, Rows
 from mira_api.db.log_executor import LogExecutor
-from mira_api.llm.client import ClaudeApiError, ClaudeClient, ClaudeRefusal
+from mira_api.llm.client import ClaudeClient
 from mira_api.nlq.coverage_facts import diagnose_empty_result
 from mira_api.nlq.language import detect_language
 from mira_api.nlq.narrative import generate_narrative
@@ -21,6 +21,7 @@ from mira_api.nlq.sql_generation import (
     GenerationAttempt,
     GenerationFailed,
     GenerationResult,
+    ModelFailed,
     NeedsClarification,
     OutOfScope,
     PriorTurn,
@@ -141,24 +142,22 @@ def _on_audit_task_done(task: asyncio.Task[None]) -> None:
 
 
 async def wait_for_audit_tasks() -> None:
-    """Solo para pruebas: la escritura de auditoria es fire-and-forget en
-    produccion (no debe sumarle latencia a la respuesta), pero una prueba que
-    quiere inspeccionar lo que se escribio necesita esperar a que termine."""
+    """Espera escrituras protegidas de desconexiones antes de cerrar el pool.
+    Tambien permite comprobar su resultado en pruebas."""
     pending = [t for t in _audit_tasks if not t.done()]
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
 
 
-def _schedule_audit_write(
+async def _persist_audit(
     log_executor: LogExecutor,
     *,
     record: QueryLogRecord,
     attempts: list[GenerationAttempt],
     final_row_count: int | None = None,
 ) -> None:
-    """Nunca se espera (Hito 4): la auditoria no le suma latencia a la
-    respuesta del usuario. Un fallo aqui se registra pero nunca cambia lo que
-    ya se le devolvio."""
+    """Espera el COMMIT antes de emitir done. Una desconexion del usuario no
+    cancela la escritura; las tareas pendientes se esperan tambien al apagar."""
     task = asyncio.create_task(
         write_audit_log(
             log_executor, record=record, attempts=attempts, final_row_count=final_row_count
@@ -166,6 +165,15 @@ def _schedule_audit_write(
     )
     _audit_tasks.add(task)
     task.add_done_callback(_on_audit_task_done)
+    try:
+        await asyncio.shield(task)
+    except Exception:
+        logger.exception(
+            "audit_write_failed query_id=%s outcome=%s error_stage=%s",
+            record.query_id,
+            record.outcome.value,
+            record.error_stage,
+        )
 
 
 def _warning_text(warning: Warning, language: str) -> str:
@@ -214,7 +222,7 @@ def unnormalised_item_warning(relations: frozenset[str]) -> Warning | None:
         message_en=(
             "Product names come exactly as each source published them, with no "
             "categorisation yet: they can repeat across genuinely different "
-            'purchases -- for instance when the source writes a generic label like '
+            "purchases -- for instance when the source writes a generic label like "
             '"Ver Pliego" instead of describing the product -- or come through '
             "empty. Read this as an approximation, not an exact classification."
         ),
@@ -361,9 +369,7 @@ def missing_country_warning(
     return None
 
 
-async def _charge_global_budget(
-    log_executor: LogExecutor, *, model: str, usage: Usage
-) -> float:
+async def _charge_global_budget(log_executor: LogExecutor, *, model: str, usage: Usage) -> float:
     cost_usd = compute_cost_usd(
         model,
         input_tokens=usage.input_tokens,
@@ -416,6 +422,10 @@ async def run_query(
     language = detect_language(question)
     countries = [c.upper() for c in request.countries]
     timings_ms: dict[str, int] = {}
+    error_stage = "budget"
+    error_type: str | None = None
+    audit_attempts: list[GenerationAttempt] = []
+    started = time.monotonic()
 
     def _emit(event: str, data: dict[str, object]) -> None:
         if on_event is not None:
@@ -430,375 +440,439 @@ async def run_query(
             response_text=response_text,
             outcome=outcome,
             attempt_count=attempt_count,
-            total_latency_ms=sum(timings_ms.values()),
+            total_latency_ms=int((time.monotonic() - started) * 1000),
             prompt_version=prompt_version,
             app_version=app_version,
             model_used=model,
-        )
-
-    # T5.3: la cuota se consume ANTES de llamar al modelo. Este chequeo es
-    # contra lo YA gastado en llamadas anteriores -- no cuesta nada llamarlo.
-    budget = await check_budget(
-        log_executor, daily_limit_usd=budget_daily_usd, monthly_limit_usd=budget_monthly_usd
-    )
-    if budget.blocked:
-        _schedule_audit_write(
-            log_executor,
-            record=_record(Outcome.THROTTLED_BUDGET, response_text=None, attempt_count=0),
-            attempts=[],
-        )
-        _emit("error", {"outcome": Outcome.THROTTLED_BUDGET.value, "detail": budget.reason})
-        _emit("done", {"outcome": Outcome.THROTTLED_BUDGET.value, "query_id": str(query_id)})
-        return QueryResponse(
             query_id=query_id,
-            question=question,
-            strategy="out_of_scope",
-            outcome=Outcome.THROTTLED_BUDGET,
-            countries_filter=countries,
-            language=language,
-            timings_ms=timings_ms,
+            error_stage=error_stage if not outcome.is_answered else None,
+            error_type=error_type,
         )
 
-    llm_start = time.monotonic()
     try:
-        result: GenerationResult = await generate_validated_sql(
-            client,
-            model=model,
-            system=system_blocks,
-            question=question,
-            countries=countries,
-            max_rows=max_rows,
-            max_attempts=sql_max_attempts,
-            history=[
-                PriorTurn(
-                    question=turn.question,
-                    countries=[c.upper() for c in turn.countries],
-                    sql=turn.sql,
+        # T5.3: la cuota se consume ANTES de llamar al modelo. Este chequeo es
+        # contra lo YA gastado en llamadas anteriores -- no cuesta nada llamarlo.
+        budget = await check_budget(
+            log_executor, daily_limit_usd=budget_daily_usd, monthly_limit_usd=budget_monthly_usd
+        )
+        if budget.blocked:
+            await _persist_audit(
+                log_executor,
+                record=_record(Outcome.THROTTLED_BUDGET, response_text=None, attempt_count=0),
+                attempts=[],
+            )
+            _emit("error", {"outcome": Outcome.THROTTLED_BUDGET.value, "detail": budget.reason})
+            _emit("done", {"outcome": Outcome.THROTTLED_BUDGET.value, "query_id": str(query_id)})
+            return QueryResponse(
+                query_id=query_id,
+                question=question,
+                strategy="out_of_scope",
+                outcome=Outcome.THROTTLED_BUDGET,
+                countries_filter=countries,
+                language=language,
+                timings_ms=timings_ms,
+            )
+
+        error_stage = "sql_generation"
+        llm_start = time.monotonic()
+        try:
+            result: GenerationResult = await generate_validated_sql(
+                client,
+                model=model,
+                system=system_blocks,
+                question=question,
+                countries=countries,
+                max_rows=max_rows,
+                max_attempts=sql_max_attempts,
+                history=[
+                    PriorTurn(
+                        question=turn.question,
+                        countries=[c.upper() for c in turn.countries],
+                        sql=turn.sql,
+                    )
+                    for turn in request.history
+                ],
+            )
+        except (OutOfScope, NeedsClarification) as clarification:
+            audit_attempts = clarification.attempts
+            timings_ms["llm_ms"] = int((time.monotonic() - llm_start) * 1000)
+            error_stage = "accounting"
+            await _charge_global_budget(log_executor, model=model, usage=clarification.usage)
+            error_stage = "sql_generation"
+            await _persist_audit(
+                log_executor,
+                record=_record(
+                    clarification.outcome,
+                    response_text=None,
+                    attempt_count=len(clarification.attempts),
+                ),
+                attempts=clarification.attempts,
+            )
+            _emit("error", {"outcome": clarification.outcome.value, "detail": None})
+            _emit("done", {"outcome": clarification.outcome.value, "query_id": str(query_id)})
+            return QueryResponse(
+                query_id=query_id,
+                question=question,
+                strategy=(
+                    "needs_clarification"
+                    if isinstance(clarification, NeedsClarification)
+                    else "out_of_scope"
+                ),
+                outcome=clarification.outcome,
+                countries_filter=countries,
+                language=language,
+                timings_ms=timings_ms,
+            )
+        except GenerationFailed as failed:
+            audit_attempts = failed.attempts
+            error_type = failed.rule
+            timings_ms["llm_ms"] = int((time.monotonic() - llm_start) * 1000)
+            error_stage = "accounting"
+            await _charge_global_budget(log_executor, model=model, usage=failed.usage)
+            error_stage = "sql_generation"
+            await _persist_audit(
+                log_executor,
+                record=_record(
+                    failed.outcome, response_text=None, attempt_count=len(failed.attempts)
+                ),
+                attempts=failed.attempts,
+            )
+            _emit("error", {"outcome": failed.outcome.value, "detail": failed.detail})
+            _emit("done", {"outcome": failed.outcome.value, "query_id": str(query_id)})
+            return QueryResponse(
+                query_id=query_id,
+                question=question,
+                strategy="generated_sql",
+                outcome=failed.outcome,
+                countries_filter=countries,
+                language=language,
+                timings_ms=timings_ms,
+            )
+        except ModelFailed as err:
+            audit_attempts = err.attempts
+            error_type = type(err.cause).__name__
+            # ClaudeApiError cubre la sobrecarga transitoria (529), el limite de
+            # tasa y los cortes de red. Sin atraparlo, un 529 -- que ocurre --
+            # salia como 500 con traza en vez del FAILED_LLM_ERROR que existe
+            # justo para esto.
+            timings_ms["llm_ms"] = int((time.monotonic() - llm_start) * 1000)
+            error_stage = "accounting"
+            await _charge_global_budget(log_executor, model=model, usage=err.usage)
+            error_stage = "sql_generation"
+            await _persist_audit(
+                log_executor,
+                record=_record(
+                    Outcome.FAILED_LLM_ERROR,
+                    response_text=None,
+                    attempt_count=len(audit_attempts),
+                ),
+                attempts=audit_attempts,
+            )
+            _emit("error", {"outcome": Outcome.FAILED_LLM_ERROR.value, "detail": None})
+            _emit("done", {"outcome": Outcome.FAILED_LLM_ERROR.value, "query_id": str(query_id)})
+            return QueryResponse(
+                query_id=query_id,
+                question=question,
+                strategy="generated_sql",
+                outcome=Outcome.FAILED_LLM_ERROR,
+                countries_filter=countries,
+                language=language,
+                timings_ms=timings_ms,
+            )
+        timings_ms["llm_ms"] = int((time.monotonic() - llm_start) * 1000)
+        audit_attempts = result.attempts
+        error_stage = "accounting"
+        await _charge_global_budget(log_executor, model=model, usage=result.usage)
+        _emit("sql", {"sql": result.validated.sql})
+
+        error_stage = "query_execution"
+        db_start = time.monotonic()
+        try:
+            rows_result = await executor.run(result.validated.sql, max_rows=max_rows)
+        except DatabaseTimeoutErrors as err:
+            error_type = type(err).__name__
+            timings_ms["db_ms"] = int((time.monotonic() - db_start) * 1000)
+            await _persist_audit(
+                log_executor,
+                record=_record(
+                    Outcome.FAILED_DB_TIMEOUT,
+                    response_text=None,
+                    attempt_count=len(result.attempts),
+                ),
+                attempts=result.attempts,
+            )
+            _emit("error", {"outcome": Outcome.FAILED_DB_TIMEOUT.value, "detail": None})
+            _emit("done", {"outcome": Outcome.FAILED_DB_TIMEOUT.value, "query_id": str(query_id)})
+            return QueryResponse(
+                query_id=query_id,
+                question=question,
+                strategy="generated_sql",
+                outcome=Outcome.FAILED_DB_TIMEOUT,
+                sql_executed=result.validated.sql,
+                countries_filter=countries,
+                language=language,
+                timings_ms=timings_ms,
+            )
+        except DatabaseError as err:
+            error_type = type(err).__name__
+            timings_ms["db_ms"] = int((time.monotonic() - db_start) * 1000)
+            await _persist_audit(
+                log_executor,
+                record=_record(
+                    Outcome.FAILED_DB_ERROR, response_text=None, attempt_count=len(result.attempts)
+                ),
+                attempts=result.attempts,
+            )
+            _emit("error", {"outcome": Outcome.FAILED_DB_ERROR.value, "detail": None})
+            _emit("done", {"outcome": Outcome.FAILED_DB_ERROR.value, "query_id": str(query_id)})
+            return QueryResponse(
+                query_id=query_id,
+                question=question,
+                strategy="generated_sql",
+                outcome=Outcome.FAILED_DB_ERROR,
+                sql_executed=result.validated.sql,
+                countries_filter=countries,
+                language=language,
+                timings_ms=timings_ms,
+            )
+        timings_ms["db_ms"] = int((time.monotonic() - db_start) * 1000)
+        rows_result = _strip_internal_ids(rows_result)
+
+        columns = _columns_from_rows(rows_result.columns, rows_result.rows)
+        _emit(
+            "row_count",
+            {"row_count": rows_result.row_count, "truncated": rows_result.truncated},
+        )
+        _emit(
+            "rows",
+            {"columns": [c.model_dump() for c in columns], "rows": rows_result.rows},
+        )
+
+        outcome = Outcome.OK_ZERO_ROWS if rows_result.row_count == 0 else Outcome.OK
+
+        # Un cero nunca se entrega desnudo: se averigua si es un cero real o si
+        # simplemente esos datos no estan cargados o el periodo esta fuera de cobertura.
+        warnings: list[Warning] = []
+        coverage_note: CoverageNote | None = None
+        is_zero_aggregate = (
+            rows_result.row_count == 1
+            and len(rows_result.rows) == 1
+            and any(
+                str(k).lower()
+                in ("count", "total", "total_procesos", "total_contratos", "num_procesos")
+                and v == 0
+                for k, v in rows_result.rows[0].items()
+            )
+        )
+
+        if rows_result.row_count == 0 or is_zero_aggregate:
+            diagnosis = await diagnose_empty_result(
+                executor,
+                countries=countries,
+                relations=result.validated.relations,
+                sql=result.validated.sql,
+            )
+            warnings = diagnosis.warnings
+            coverage_note = diagnosis.coverage
+            if not warnings and "query.v_awards" in result.validated.relations:
+                warnings.append(
+                    Warning(
+                        code="NO_VALID_AWARDS",
+                        message_es=(
+                            "No se encontraron adjudicaciones válidas para estos filtros. "
+                            "Por defecto se excluyen las canceladas, pendientes o fallidas "
+                            "según la fuente. Puedes pedir esos estados explícitamente."
+                        ),
+                        message_en=(
+                            "No valid awards matched the requested filters. Awards marked as "
+                            "cancelled, pending or unsuccessful by the source are excluded. "
+                            "You can ask for those states explicitly."
+                        ),
+                    )
                 )
-                for turn in request.history
-            ],
-        )
-    except (OutOfScope, NeedsClarification) as clarification:
-        timings_ms["llm_ms"] = int((time.monotonic() - llm_start) * 1000)
-        await _charge_global_budget(log_executor, model=model, usage=clarification.usage)
-        _schedule_audit_write(
-            log_executor,
-            record=_record(
-                clarification.outcome, response_text=None, attempt_count=len(clarification.attempts)
-            ),
-            attempts=clarification.attempts,
-        )
-        _emit("error", {"outcome": clarification.outcome.value, "detail": None})
-        _emit("done", {"outcome": clarification.outcome.value, "query_id": str(query_id)})
-        return QueryResponse(
-            query_id=query_id,
-            question=question,
-            strategy=(
-                "needs_clarification"
-                if isinstance(clarification, NeedsClarification)
-                else "out_of_scope"
-            ),
-            outcome=clarification.outcome,
-            countries_filter=countries,
-            language=language,
-            timings_ms=timings_ms,
-        )
-    except GenerationFailed as failed:
-        timings_ms["llm_ms"] = int((time.monotonic() - llm_start) * 1000)
-        await _charge_global_budget(log_executor, model=model, usage=failed.usage)
-        _schedule_audit_write(
-            log_executor,
-            record=_record(failed.outcome, response_text=None, attempt_count=len(failed.attempts)),
-            attempts=failed.attempts,
-        )
-        _emit("error", {"outcome": failed.outcome.value, "detail": failed.detail})
-        _emit("done", {"outcome": failed.outcome.value, "query_id": str(query_id)})
-        return QueryResponse(
-            query_id=query_id,
-            question=question,
-            strategy="generated_sql",
-            outcome=failed.outcome,
-            countries_filter=countries,
-            language=language,
-            timings_ms=timings_ms,
-        )
-    except (ClaudeRefusal, ClaudeApiError):
-        # ClaudeApiError cubre la sobrecarga transitoria (529), el limite de
-        # tasa y los cortes de red. Sin atraparlo, un 529 -- que ocurre --
-        # salia como 500 con traza en vez del FAILED_LLM_ERROR que existe
-        # justo para esto.
-        timings_ms["llm_ms"] = int((time.monotonic() - llm_start) * 1000)
-        _schedule_audit_write(
-            log_executor,
-            record=_record(Outcome.FAILED_LLM_ERROR, response_text=None, attempt_count=0),
-            attempts=[],
-        )
-        _emit("error", {"outcome": Outcome.FAILED_LLM_ERROR.value, "detail": None})
-        _emit("done", {"outcome": Outcome.FAILED_LLM_ERROR.value, "query_id": str(query_id)})
-        return QueryResponse(
-            query_id=query_id,
-            question=question,
-            strategy="generated_sql",
-            outcome=Outcome.FAILED_LLM_ERROR,
-            countries_filter=countries,
-            language=language,
-            timings_ms=timings_ms,
-        )
-    timings_ms["llm_ms"] = int((time.monotonic() - llm_start) * 1000)
-    await _charge_global_budget(log_executor, model=model, usage=result.usage)
-    _emit("sql", {"sql": result.validated.sql})
 
-    db_start = time.monotonic()
-    try:
-        rows_result = await executor.run(result.validated.sql, max_rows=max_rows)
-    except QueryTimeout:
-        timings_ms["db_ms"] = int((time.monotonic() - db_start) * 1000)
-        _schedule_audit_write(
-            log_executor,
-            record=_record(
-                Outcome.FAILED_DB_TIMEOUT, response_text=None, attempt_count=len(result.attempts)
-            ),
-            attempts=result.attempts,
-        )
-        _emit("error", {"outcome": Outcome.FAILED_DB_TIMEOUT.value, "detail": None})
-        _emit("done", {"outcome": Outcome.FAILED_DB_TIMEOUT.value, "query_id": str(query_id)})
-        return QueryResponse(
-            query_id=query_id,
-            question=question,
-            strategy="generated_sql",
-            outcome=Outcome.FAILED_DB_TIMEOUT,
-            sql_executed=result.validated.sql,
-            countries_filter=countries,
-            language=language,
-            timings_ms=timings_ms,
-        )
-    except DatabaseError:
-        timings_ms["db_ms"] = int((time.monotonic() - db_start) * 1000)
-        _schedule_audit_write(
-            log_executor,
-            record=_record(
-                Outcome.FAILED_DB_ERROR, response_text=None, attempt_count=len(result.attempts)
-            ),
-            attempts=result.attempts,
-        )
-        _emit("error", {"outcome": Outcome.FAILED_DB_ERROR.value, "detail": None})
-        _emit("done", {"outcome": Outcome.FAILED_DB_ERROR.value, "query_id": str(query_id)})
-        return QueryResponse(
-            query_id=query_id,
-            question=question,
-            strategy="generated_sql",
-            outcome=Outcome.FAILED_DB_ERROR,
-            sql_executed=result.validated.sql,
-            countries_filter=countries,
-            language=language,
-            timings_ms=timings_ms,
-        )
-    timings_ms["db_ms"] = int((time.monotonic() - db_start) * 1000)
-    rows_result = _strip_internal_ids(rows_result)
+        if rows_result.row_count > 0:
+            mezcla = mixed_currency_warning(columns, rows_result.rows, countries)
+            if mezcla is not None:
+                warnings.append(mezcla)
+            # Mutuamente excluyente con mixed_currency_warning por construccion:
+            # esta solo corre cuando NO hay columna de dinero de por medio.
+            falta_pais = missing_country_warning(columns, rows_result.rows, countries)
+            if falta_pais is not None:
+                warnings.append(falta_pais)
+            sin_normalizar = unnormalised_item_warning(result.validated.relations)
+            if sin_normalizar is not None:
+                warnings.append(sin_normalizar)
 
-    columns = _columns_from_rows(rows_result.columns, rows_result.rows)
-    _emit(
-        "row_count",
-        {"row_count": rows_result.row_count, "truncated": rows_result.truncated},
-    )
-    _emit(
-        "rows",
-        {"columns": [c.model_dump() for c in columns], "rows": rows_result.rows},
-    )
-
-    outcome = Outcome.OK_ZERO_ROWS if rows_result.row_count == 0 else Outcome.OK
-
-    # Un cero nunca se entrega desnudo: se averigua si es un cero real o si
-    # simplemente esos datos no estan cargados o el periodo esta fuera de cobertura.
-    warnings: list[Warning] = []
-    coverage_note: CoverageNote | None = None
-    is_zero_aggregate = (
-        rows_result.row_count == 1
-        and len(rows_result.rows) == 1
-        and any(
-            str(k).lower()
-            in ("count", "total", "total_procesos", "total_contratos", "num_procesos")
-            and v == 0
-            for k, v in rows_result.rows[0].items()
-        )
-    )
-
-    if rows_result.row_count == 0 or is_zero_aggregate:
-        diagnosis = await diagnose_empty_result(
-            executor,
-            countries=countries,
-            relations=result.validated.relations,
-            sql=result.validated.sql,
-        )
-        warnings = diagnosis.warnings
-        coverage_note = diagnosis.coverage
-        if not warnings and "query.v_awards" in result.validated.relations:
+        if (
+            rows_result.row_count > 0
+            and not rows_result.truncated
+            and result.validated.effective_limit > 1
+            and rows_result.row_count >= result.validated.effective_limit
+        ):
+            # El tope global (rows_result.truncated) no dice nada aqui: un ranking
+            # ambiguo (regla 5c) corta en LIMIT 100, muy por debajo del tope de
+            # seguridad de 500, y sin este aviso esas otras filas desaparecen sin
+            # dejar rastro. LIMIT 1 queda afuera a proposito -- ahi se pidio un
+            # solo ganador, no una lista, y "hay mas" no tiene sentido como aviso.
             warnings.append(
                 Warning(
-                    code="NO_VALID_AWARDS",
+                    code="LIMIT_MAY_HIDE_ROWS",
                     message_es=(
-                        "No se encontraron adjudicaciones válidas para los filtros consultados. "
-                        "Por defecto se excluyen las canceladas, pendientes, fallidas y los "
-                        "registros con errores. Puedes pedir esos estados explícitamente."
+                        f"Se muestran {rows_result.row_count} filas: puede haber mas. "
+                        "Pedi ver mas filas, o hace la pregunta mas especifica (un pais, "
+                        "un periodo, un top mas chico) para acotar el resultado."
                     ),
                     message_en=(
-                        "No valid awards matched the requested filters. Cancelled, pending, "
-                        "unsuccessful awards and records with errors are excluded by default. "
-                        "You can ask for those states explicitly."
+                        f"Showing {rows_result.row_count} rows: there may be more. Ask "
+                        "to see more rows, or make the question more specific (one "
+                        "country, one period, a smaller top-N) to narrow the result."
                     ),
+                    details={"limit": result.validated.effective_limit},
                 )
             )
 
-    if rows_result.row_count > 0:
-        mezcla = mixed_currency_warning(columns, rows_result.rows, countries)
-        if mezcla is not None:
-            warnings.append(mezcla)
-        # Mutuamente excluyente con mixed_currency_warning por construccion:
-        # esta solo corre cuando NO hay columna de dinero de por medio.
-        falta_pais = missing_country_warning(columns, rows_result.rows, countries)
-        if falta_pais is not None:
-            warnings.append(falta_pais)
-        sin_normalizar = unnormalised_item_warning(result.validated.relations)
-        if sin_normalizar is not None:
-            warnings.append(sin_normalizar)
-
-    if (
-        rows_result.row_count > 0
-        and not rows_result.truncated
-        and result.validated.effective_limit > 1
-        and rows_result.row_count >= result.validated.effective_limit
-    ):
-        # El tope global (rows_result.truncated) no dice nada aqui: un ranking
-        # ambiguo (regla 5c) corta en LIMIT 100, muy por debajo del tope de
-        # seguridad de 500, y sin este aviso esas otras filas desaparecen sin
-        # dejar rastro. LIMIT 1 queda afuera a proposito -- ahi se pidio un
-        # solo ganador, no una lista, y "hay mas" no tiene sentido como aviso.
-        warnings.append(
-            Warning(
-                code="LIMIT_MAY_HIDE_ROWS",
-                message_es=(
-                    f"Se muestran {rows_result.row_count} filas: puede haber mas. "
-                    "Pedi ver mas filas, o hace la pregunta mas especifica (un pais, "
-                    "un periodo, un top mas chico) para acotar el resultado."
-                ),
-                message_en=(
-                    f"Showing {rows_result.row_count} rows: there may be more. Ask "
-                    "to see more rows, or make the question more specific (one "
-                    "country, one period, a smaller top-N) to narrow the result."
-                ),
-                details={"limit": result.validated.effective_limit},
+        if rows_result.row_count > 0 and rows_result.truncated:
+            # Se alcanzo el tope de filas: lo que se ve es un pedazo, y quien
+            # pregunta no tiene como saberlo mirando la tabla. Decirlo importa
+            # tanto como los datos -- sacar conclusiones de un pedazo creyendo
+            # que es el total es el mismo error que un total mal sumado.
+            # append, no asignacion: un resultado puede estar truncado Y mezclar
+            # monedas a la vez, y pisar un aviso con el otro deja a medias la unica
+            # parte de la respuesta que dice que NO se puede concluir.
+            warnings.append(
+                Warning(
+                    code="TRUNCATED_RESULT",
+                    message_es=(
+                        f"Se muestran {rows_result.row_count} filas, que es el maximo por "
+                        "consulta: hay mas. Para verlo completo conviene preguntar por un "
+                        "mes a la vez."
+                    ),
+                    message_en=(
+                        f"Showing {rows_result.row_count} rows, the per-query maximum: "
+                        "there are more. To see the whole set, better to ask one month "
+                        "at a time."
+                    ),
+                    details={"max_rows": rows_result.row_count},
+                )
             )
-        )
-
-    if rows_result.row_count > 0 and rows_result.truncated:
-        # Se alcanzo el tope de filas: lo que se ve es un pedazo, y quien
-        # pregunta no tiene como saberlo mirando la tabla. Decirlo importa
-        # tanto como los datos -- sacar conclusiones de un pedazo creyendo
-        # que es el total es el mismo error que un total mal sumado.
-        # append, no asignacion: un resultado puede estar truncado Y mezclar
-        # monedas a la vez, y pisar un aviso con el otro deja a medias la unica
-        # parte de la respuesta que dice que NO se puede concluir.
-        warnings.append(
-            Warning(
-                code="TRUNCATED_RESULT",
-                message_es=(
-                    f"Se muestran {rows_result.row_count} filas, que es el maximo por "
-                    "consulta: hay mas. Para verlo completo conviene preguntar por un "
-                    "mes a la vez."
-                ),
-                message_en=(
-                    f"Showing {rows_result.row_count} rows, the per-query maximum: "
-                    "there are more. To see the whole set, better to ask one month "
-                    "at a time."
-                ),
-                details={"max_rows": rows_result.row_count},
+        if warnings:
+            # Se emite antes que la narrativa: el motivo del vacio, o el aviso de
+            # que falta data por ver, es parte de la respuesta y no un adorno que
+            # llega despues.
+            _emit(
+                "warnings",
+                # El idioma viaja con los avisos, no solo en la respuesta final:
+                # el cliente los pinta apenas llegan, mucho antes del evento
+                # "done", y sin esto no sabria cual de los dos textos mostrar.
+                {"warnings": [w.model_dump() for w in warnings], "language": language},
             )
-        )
-    if warnings:
-        # Se emite antes que la narrativa: el motivo del vacio, o el aviso de
-        # que falta data por ver, es parte de la respuesta y no un adorno que
-        # llega despues.
-        _emit(
-            "warnings",
-            # El idioma viaja con los avisos, no solo en la respuesta final:
-            # el cliente los pinta apenas llegan, mucho antes del evento
-            # "done", y sin esto no sabria cual de los dos textos mostrar.
-            {"warnings": [w.model_dump() for w in warnings], "language": language},
-        )
 
-    narrative_text: str | None = None
-    narrative_verified = False
-    unverified_numbers: list[str] = []
-    if request.narrative:
-        narrative_start = time.monotonic()
-        narrative_result = await generate_narrative(
-            client,
-            model=narrative_model,
+        narrative_text: str | None = None
+        narrative_verified = False
+        unverified_numbers: list[str] = []
+        if request.narrative:
+            error_stage = "narrative"
+            narrative_start = time.monotonic()
+            narrative_result = await generate_narrative(
+                client,
+                model=narrative_model,
+                question=question,
+                rows=rows_result.rows,
+                row_count=rows_result.row_count,
+                truncated=rows_result.truncated,
+                max_attempts=narrative_max_attempts,
+                max_rows_in_prompt=narrative_max_rows_in_prompt,
+                # Con cero filas o advertencias de cobertura/periodo faltante no se llama
+                # al modelo: se sirve la explicacion exacta.
+                empty_reason=(
+                    _warning_text(warnings[0], language)
+                    if (
+                        warnings
+                        and (
+                            rows_result.row_count == 0
+                            or warnings[0].code in ("PARTIAL_COVERAGE", "NO_DATA_FOR_PERIOD")
+                        )
+                    )
+                    else None
+                ),
+                language=language,
+            )
+            timings_ms["narrative_ms"] = int((time.monotonic() - narrative_start) * 1000)
+            error_stage = "accounting"
+            await _charge_global_budget(
+                log_executor, model=narrative_model, usage=narrative_result.usage
+            )
+            error_stage = "narrative"
+            narrative_text = narrative_result.text
+            narrative_verified = narrative_result.verified
+            unverified_numbers = narrative_result.unverified_numbers
+            # Metrica bloqueante (Parte 1.12): datos entregados igual, pero la
+            # redaccion se reemplazo por la plantilla porque alucino un numero.
+            if outcome is Outcome.OK and not narrative_verified:
+                outcome = Outcome.OK_DEGRADED_NARRATIVE
+            _emit(
+                "narrative",
+                {
+                    "text": narrative_text,
+                    "verified": narrative_verified,
+                    "unverified_numbers": unverified_numbers,
+                },
+            )
+
+        await _persist_audit(
+            log_executor,
+            record=_record(
+                outcome, response_text=narrative_text, attempt_count=len(result.attempts)
+            ),
+            attempts=result.attempts,
+            final_row_count=rows_result.row_count,
+        )
+        _emit("done", {"outcome": outcome.value, "query_id": str(query_id)})
+
+        return QueryResponse(
+            query_id=query_id,
             question=question,
+            strategy="generated_sql",
+            outcome=outcome,
+            sql_executed=result.validated.sql,
+            countries_filter=countries,
+            language=language,
+            columns=columns,
             rows=rows_result.rows,
             row_count=rows_result.row_count,
             truncated=rows_result.truncated,
-            max_attempts=narrative_max_attempts,
-            max_rows_in_prompt=narrative_max_rows_in_prompt,
-            # Con cero filas o advertencias de cobertura/periodo faltante no se llama
-            # al modelo: se sirve la explicacion exacta.
-            empty_reason=(
-                _warning_text(warnings[0], language)
-                if (
-                    warnings
-                    and (
-                        rows_result.row_count == 0
-                        or warnings[0].code in ("PARTIAL_COVERAGE", "NO_DATA_FOR_PERIOD")
-                    )
-                )
-                else None
-            ),
+            narrative=narrative_text,
+            narrative_verified=narrative_verified,
+            unverified_numbers=unverified_numbers,
+            warnings=warnings,
+            coverage=coverage_note,
+            timings_ms=timings_ms,
+        )
+    except Exception as err:
+        error_type = type(err).__name__
+        outcome = (
+            Outcome.FAILED_DB_TIMEOUT
+            if isinstance(err, DatabaseTimeoutErrors)
+            else Outcome.FAILED_DB_ERROR
+            if isinstance(err, DatabaseError)
+            else Outcome.FAILED_INTERNAL_ERROR
+        )
+        timings_ms["total_ms"] = int((time.monotonic() - started) * 1000)
+        logger.exception("query_failed query_id=%s stage=%s", query_id, error_stage)
+        await _persist_audit(
+            log_executor,
+            record=_record(outcome, response_text=None, attempt_count=len(audit_attempts)),
+            attempts=audit_attempts,
+        )
+        _emit("error", {"outcome": outcome.value, "detail": None})
+        _emit("done", {"outcome": outcome.value, "query_id": str(query_id)})
+        return QueryResponse(
+            query_id=query_id,
+            question=question,
+            strategy="generated_sql",
+            outcome=outcome,
+            countries_filter=countries,
             language=language,
+            timings_ms=timings_ms,
         )
-        timings_ms["narrative_ms"] = int((time.monotonic() - narrative_start) * 1000)
-        await _charge_global_budget(
-            log_executor, model=narrative_model, usage=narrative_result.usage
-        )
-        narrative_text = narrative_result.text
-        narrative_verified = narrative_result.verified
-        unverified_numbers = narrative_result.unverified_numbers
-        # Metrica bloqueante (Parte 1.12): datos entregados igual, pero la
-        # redaccion se reemplazo por la plantilla porque alucino un numero.
-        if outcome is Outcome.OK and not narrative_verified:
-            outcome = Outcome.OK_DEGRADED_NARRATIVE
-        _emit(
-            "narrative",
-            {
-                "text": narrative_text,
-                "verified": narrative_verified,
-                "unverified_numbers": unverified_numbers,
-            },
-        )
-
-    _schedule_audit_write(
-        log_executor,
-        record=_record(outcome, response_text=narrative_text, attempt_count=len(result.attempts)),
-        attempts=result.attempts,
-        final_row_count=rows_result.row_count,
-    )
-    _emit("done", {"outcome": outcome.value, "query_id": str(query_id)})
-
-    return QueryResponse(
-        query_id=query_id,
-        question=question,
-        strategy="generated_sql",
-        outcome=outcome,
-        sql_executed=result.validated.sql,
-        countries_filter=countries,
-            language=language,
-        columns=columns,
-        rows=rows_result.rows,
-        row_count=rows_result.row_count,
-        truncated=rows_result.truncated,
-        narrative=narrative_text,
-        narrative_verified=narrative_verified,
-        unverified_numbers=unverified_numbers,
-        warnings=warnings,
-        coverage=coverage_note,
-        timings_ms=timings_ms,
-    )

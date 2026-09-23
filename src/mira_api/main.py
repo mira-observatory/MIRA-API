@@ -7,6 +7,7 @@ import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Literal
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,13 +16,15 @@ from fastapi.responses import StreamingResponse
 from mira_api.api.rate_limit import IpRateLimiter, resolve_client_ip
 from mira_api.api.routes import router
 from mira_api.api.schemas import EntityCandidate, QueryRequest, QueryResponse
+from mira_api.audit.outcomes import Outcome
+from mira_api.audit.writer import QueryLogRecord, write_audit_log
 from mira_api.config import get_settings
 from mira_api.db.executor import ReadOnlyExecutor
 from mira_api.db.log_executor import LogExecutor
 from mira_api.db.pool import build_log_pool, build_read_pool, build_web_pool
 from mira_api.llm.client import ClaudeClient
 from mira_api.nlq.entities import resolve_entities
-from mira_api.nlq.pipeline import run_query
+from mira_api.nlq.pipeline import run_query, wait_for_audit_tasks
 from mira_api.nlq.semantic_dictionary import load_semantic_dictionary
 from mira_api.nlq.sql_generation import build_system_blocks
 from mira_api.quota.identity import COOKIE_NAME, new_token, resolve_subject_key, sign_token
@@ -66,6 +69,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         yield
     finally:
+        await wait_for_audit_tasks()
         await app.state.read_pool.close()
         await app.state.log_pool.close()
         if app.state.web_pool is not None:
@@ -89,6 +93,7 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
 
 @app.middleware("http")
 async def _cabeceras_de_seguridad(http_request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -232,9 +237,7 @@ def _format_sse(event: str, data: dict[str, object]) -> bytes:
 
 
 @app.post("/query/stream", dependencies=[Depends(_enforce_rate_limit)])
-async def query_stream(
-    request: QueryRequest, http_request: Request
-) -> StreamingResponse:
+async def query_stream(request: QueryRequest, http_request: Request) -> StreamingResponse:
     """Misma traduccion, ejecucion y redaccion que POST /query, pero
     transmitida por SSE segun cada fase queda lista: sql -> row_count -> rows
     -> narrative -> done (o error -> done si el pipeline corta antes).
@@ -263,9 +266,7 @@ async def query_stream(
     return streaming_response
 
 
-async def _stream_query_events(
-    request: QueryRequest, subject_key: str
-) -> AsyncIterator[bytes]:
+async def _stream_query_events(request: QueryRequest, subject_key: str) -> AsyncIterator[bytes]:
     settings = app.state.settings
     queue: asyncio.Queue[tuple[str, dict[str, object]] | None] = asyncio.Queue()
 
@@ -293,10 +294,33 @@ async def _stream_query_events(
                 app_version=settings.app_version,
                 on_event=on_event,
             )
-        except Exception:
+        except Exception as err:
             logger.exception("fallo inesperado transmitiendo /query/stream")
-            on_event("error", {"outcome": "FAILED_LLM_ERROR", "detail": "internal_error"})
-            on_event("done", {"outcome": "FAILED_LLM_ERROR", "query_id": None})
+            query_id = uuid4()
+            try:
+                await write_audit_log(
+                    app.state.log_executor,
+                    record=QueryLogRecord(
+                        query_id=query_id,
+                        subject_key=subject_key,
+                        question_text=request.question,
+                        response_text=None,
+                        outcome=Outcome.FAILED_INTERNAL_ERROR,
+                        attempt_count=0,
+                        total_latency_ms=0,
+                        prompt_version=settings.prompt_version,
+                        app_version=settings.app_version,
+                        model_used=settings.sql_model,
+                        error_stage="stream",
+                        error_type=type(err).__name__,
+                    ),
+                    attempts=[],
+                    final_row_count=None,
+                )
+            except Exception:
+                logger.exception("audit_write_failed query_id=%s stage=stream", query_id)
+            on_event("error", {"outcome": "FAILED_INTERNAL_ERROR", "detail": "internal_error"})
+            on_event("done", {"outcome": "FAILED_INTERNAL_ERROR", "query_id": str(query_id)})
         finally:
             queue.put_nowait(None)
 

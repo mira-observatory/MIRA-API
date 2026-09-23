@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 import psycopg
 import pytest
 
@@ -112,6 +114,10 @@ class _FakeLogExecutor:
         self.query_attempt_rows: list[dict] = []
         self._next_query_log_id = 1
 
+    @asynccontextmanager
+    async def transaction(self):
+        yield self
+
     async def fetch_one(self, sql: str, params: dict | None = None) -> dict | None:
         params = params or {}
         lowered = sql.lower()
@@ -205,9 +211,7 @@ async def test_pregunta_respondible_devuelve_filas_reales() -> None:
 
 @pytest.mark.asyncio
 async def test_cero_filas_es_ok_zero_rows_no_error() -> None:
-    client = _ScriptedClient(
-        ["select process_id from query.v_process where country_code = 'HN'"]
-    )
+    client = _ScriptedClient(["select process_id from query.v_process where country_code = 'HN'"])
     executor = _ScriptedExecutor(
         result=Rows(columns=["process_id"], rows=[], row_count=0, truncated=False)
     )
@@ -287,9 +291,7 @@ async def test_sql_irrecuperable_no_ejecuta_nada() -> None:
 
 @pytest.mark.asyncio
 async def test_timeout_de_base_de_datos_se_reporta_como_tal() -> None:
-    client = _ScriptedClient(
-        ["select process_id from query.v_process where country_code = 'CR'"]
-    )
+    client = _ScriptedClient(["select process_id from query.v_process where country_code = 'CR'"])
     executor = _ScriptedExecutor(error=psycopg.errors.QueryCanceled("statement timeout"))
 
     response = await run_query(
@@ -361,9 +363,7 @@ async def test_presupuesto_agotado_bloquea_antes_de_llamar_al_modelo() -> None:
 
 @pytest.mark.asyncio
 async def test_gasto_real_se_registra_despues_de_generar() -> None:
-    client = _ScriptedClient(
-        ["select process_id from query.v_process where country_code = 'CR'"]
-    )
+    client = _ScriptedClient(["select process_id from query.v_process where country_code = 'CR'"])
     executor = _ScriptedExecutor(
         result=Rows(
             columns=["process_id"], rows=[{"process_id": "p1"}], row_count=1, truncated=False
@@ -507,9 +507,7 @@ async def test_sin_pedir_narrativa_no_se_llama_al_modelo_de_redaccion() -> None:
 
 @pytest.mark.asyncio
 async def test_consulta_ok_escribe_query_log_y_un_query_attempt_aceptado() -> None:
-    client = _ScriptedClient(
-        ["select process_id from query.v_process where country_code = 'CR'"]
-    )
+    client = _ScriptedClient(["select process_id from query.v_process where country_code = 'CR'"])
     executor = _ScriptedExecutor(
         result=Rows(
             columns=["process_id"], rows=[{"process_id": "p1"}], row_count=1, truncated=False
@@ -726,6 +724,7 @@ def _money_columns() -> list[Column]:
         Column(name="awarded_amount", kind="money", currency_code="CRC"),
         Column(name="currency_code", kind="text"),
     ]
+
 
 def test_avisa_cuando_la_tabla_mezcla_monedas() -> None:
     """Una tabla ordenada por monto que mezcla monedas esta ordenada por
@@ -1005,18 +1004,24 @@ def test_sin_aviso_si_la_consulta_no_toca_v_items() -> None:
 
 @pytest.mark.asyncio
 async def test_sin_adjudicaciones_validas_explica_el_filtro_sin_ampliarlo() -> None:
-    client = _ScriptedClient([
-        "select awarded_amount from query.v_awards order by awarded_amount desc limit 1"
-    ])
+    client = _ScriptedClient(
+        ["select awarded_amount from query.v_awards order by awarded_amount desc limit 1"]
+    )
     events: list[tuple[str, dict]] = []
     response = await run_query(
         QueryRequest(question="la adjudicacion mas cara en Guatemala", countries=["GT"]),
         client=client,  # type: ignore[arg-type]
         executor=_ScriptedExecutor(result=Rows(columns=[], rows=[], row_count=0, truncated=False)),  # type: ignore[arg-type]
         log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
-        system_blocks=[], model="claude-sonnet-5", narrative_model="claude-haiku-4-5-20251001",
-        max_rows=MAX_ROWS, budget_daily_usd=BUDGET_DAILY, budget_monthly_usd=BUDGET_MONTHLY,
-        subject_key="test-subject", prompt_version="test", app_version="test",
+        system_blocks=[],
+        model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY,
+        budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="test",
+        app_version="test",
         on_event=lambda event, data: events.append((event, data)),
     )
     # The fake also reports no coverage, so that diagnosis retains precedence.
@@ -1037,14 +1042,22 @@ async def test_explicacion_de_cero_adjudicaciones_validas_llega_al_stream(monkey
     monkeypatch.setattr("mira_api.nlq.pipeline.diagnose_empty_result", diagnosis)
     response = await run_query(
         QueryRequest(question="la adjudicacion mas cara en Guatemala", countries=["GT"]),
-        client=_ScriptedClient([  # type: ignore[arg-type]
-            "select awarded_amount from query.v_awards order by awarded_amount desc limit 1"
-        ]),
+        client=_ScriptedClient(
+            [  # type: ignore[arg-type]
+                "select awarded_amount from query.v_awards order by awarded_amount desc limit 1"
+            ]
+        ),
         executor=_ScriptedExecutor(result=Rows(columns=[], rows=[], row_count=0, truncated=False)),  # type: ignore[arg-type]
         log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
-        system_blocks=[], model="claude-sonnet-5", narrative_model="claude-haiku-4-5-20251001",
-        max_rows=MAX_ROWS, budget_daily_usd=BUDGET_DAILY, budget_monthly_usd=BUDGET_MONTHLY,
-        subject_key="test-subject", prompt_version="test", app_version="test",
+        system_blocks=[],
+        model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY,
+        budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="test",
+        app_version="test",
         on_event=lambda event, data: events.append((event, data)),
     )
     assert response.outcome is Outcome.OK_ZERO_ROWS
@@ -1052,3 +1065,96 @@ async def test_explicacion_de_cero_adjudicaciones_validas_llega_al_stream(monkey
     assert response.narrative == response.warnings[0].message_es
     warning = next(data for event, data in events if event == "warnings")
     assert warning["warnings"][0]["code"] == "NO_VALID_AWARDS"
+
+
+@pytest.mark.asyncio
+async def test_audit_commit_precedes_done_and_matches_response_id():
+    log = _FakeLogExecutor()
+    ids_at_done = []
+
+    def event(name, data):
+        if name == "done":
+            assert len(log.query_log_rows) == 1
+            ids_at_done.append(str(log.query_log_rows[0]["query_id"]))
+
+    response = await run_query(
+        _request(),
+        client=_ScriptedClient(["QUESTION_TOO_BROAD"]),
+        executor=_ScriptedExecutor(),
+        log_executor=log,
+        system_blocks=[],
+        model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY,
+        budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test",
+        prompt_version="test",
+        app_version="test",
+        on_event=event,
+    )
+    assert ids_at_done == [str(response.query_id)]
+
+
+@pytest.mark.asyncio
+async def test_audit_database_failure_is_visible_in_server_logs(caplog):
+    class BrokenAudit(_FakeLogExecutor):
+        @asynccontextmanager
+        async def transaction(self):
+            raise RuntimeError("audit unavailable")
+            yield self
+
+    log = BrokenAudit()
+    response = await run_query(
+        _request(),
+        client=_ScriptedClient(["QUESTION_TOO_BROAD"]),
+        executor=_ScriptedExecutor(),
+        log_executor=log,
+        system_blocks=[],
+        model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY,
+        budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test",
+        prompt_version="test",
+        app_version="test",
+    )
+    assert not log.query_log_rows
+    assert "audit_write_failed" in caplog.text
+    assert str(response.query_id) in caplog.text
+    assert "REJECTED_QUESTION_TOO_BROAD" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_model_failure_keeps_previous_sql_rejections():
+    from mira_api.llm.client import ClaudeRefusal
+
+    class FailsOnRetry(_ScriptedClient):
+        async def complete_text(self, **kwargs):
+            if self._responses:
+                return await super().complete_text(**kwargs)
+            raise ClaudeRefusal(None, "test refusal")
+
+    log = _FakeLogExecutor()
+    response = await run_query(
+        _request(),
+        client=FailsOnRetry(["select * from mart.private"]),
+        executor=_ScriptedExecutor(),
+        log_executor=log,
+        system_blocks=[],
+        model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY,
+        budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test",
+        prompt_version="test",
+        app_version="test",
+    )
+    assert response.outcome is Outcome.FAILED_LLM_ERROR
+    assert log.query_log_rows[0]["error_stage"] == "sql_generation"
+    assert log.query_log_rows[0]["error_type"] == "ClaudeRefusal"
+    assert log.query_log_rows[0]["attempt_count"] == 1
+    assert log.query_attempt_rows[0]["outcome"] == "REJECTED_SQL_RELATION"
+    assert any(c["spent_usd"] > 0 for c in log._counters.values())
