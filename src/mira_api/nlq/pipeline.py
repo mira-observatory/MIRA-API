@@ -21,6 +21,7 @@ from mira_api.nlq.sql_generation import (
     GenerationAttempt,
     GenerationFailed,
     GenerationResult,
+    NeedsClarification,
     OutOfScope,
     PriorTurn,
     Usage,
@@ -477,23 +478,27 @@ async def run_query(
                 for turn in request.history
             ],
         )
-    except OutOfScope as out_of_scope:
+    except (OutOfScope, NeedsClarification) as clarification:
         timings_ms["llm_ms"] = int((time.monotonic() - llm_start) * 1000)
-        await _charge_global_budget(log_executor, model=model, usage=out_of_scope.usage)
+        await _charge_global_budget(log_executor, model=model, usage=clarification.usage)
         _schedule_audit_write(
             log_executor,
             record=_record(
-                Outcome.OUT_OF_SCOPE, response_text=None, attempt_count=len(out_of_scope.attempts)
+                clarification.outcome, response_text=None, attempt_count=len(clarification.attempts)
             ),
-            attempts=out_of_scope.attempts,
+            attempts=clarification.attempts,
         )
-        _emit("error", {"outcome": Outcome.OUT_OF_SCOPE.value, "detail": None})
-        _emit("done", {"outcome": Outcome.OUT_OF_SCOPE.value, "query_id": str(query_id)})
+        _emit("error", {"outcome": clarification.outcome.value, "detail": None})
+        _emit("done", {"outcome": clarification.outcome.value, "query_id": str(query_id)})
         return QueryResponse(
             query_id=query_id,
             question=question,
-            strategy="out_of_scope",
-            outcome=Outcome.OUT_OF_SCOPE,
+            strategy=(
+                "needs_clarification"
+                if isinstance(clarification, NeedsClarification)
+                else "out_of_scope"
+            ),
+            outcome=clarification.outcome,
             countries_filter=countries,
             language=language,
             timings_ms=timings_ms,

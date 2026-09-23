@@ -26,6 +26,50 @@ BUDGET_DAILY = 1000.0
 BUDGET_MONTHLY = 1000.0
 
 
+@pytest.mark.parametrize(
+    ("question", "sentinel", "outcome"),
+    [
+        ("computadoras guatemala", "QUESTION_TOO_BROAD", Outcome.REJECTED_QUESTION_TOO_BROAD),
+        ("y eso como queda?", "INTENT_UNCLEAR", Outcome.REJECTED_INTENT_UNCLEAR),
+    ],
+)
+@pytest.mark.asyncio
+async def test_aclaracion_llega_a_json_stream_y_auditoria_sin_consultar_datos(
+    question: str, sentinel: str, outcome: Outcome
+) -> None:
+    log_executor = _FakeLogExecutor()
+    events: list[tuple[str, dict]] = []
+    response = await run_query(
+        QueryRequest(question=question, countries=["GT"], narrative=True),
+        client=_ScriptedClient([sentinel]),  # type: ignore[arg-type]
+        executor=_ScriptedExecutor(error=AssertionError("no debe consultar datos")),  # type: ignore[arg-type]
+        log_executor=log_executor,  # type: ignore[arg-type]
+        system_blocks=[],
+        model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY,
+        budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject",
+        prompt_version="0.1.0",
+        app_version="0.1.0",
+        on_event=lambda event, data: events.append((event, data)),
+    )
+    await wait_for_audit_tasks()
+    assert response.outcome is outcome
+    assert response.model_dump(mode="json")["outcome"] == outcome.value
+    assert response.strategy == "needs_clarification"
+    assert response.sql_executed is None
+    assert response.rows == []
+    assert response.narrative is None
+    assert [event for event, _ in events] == ["error", "done"]
+    assert all(data["outcome"] == outcome.value for _, data in events)
+    assert log_executor.query_log_rows[0]["outcome"] == outcome.value
+    assert log_executor.query_attempt_rows[0]["outcome"] == outcome.value
+    assert log_executor.query_log_rows[0]["attempt_count"] == 1
+    assert any(c["spent_usd"] > 0 for c in log_executor._counters.values())
+
+
 def _completion(text: str) -> Completion:
     return Completion(
         text=text, input_tokens=100, output_tokens=20, cache_read_tokens=0, cache_creation_tokens=0

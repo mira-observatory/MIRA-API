@@ -93,7 +93,7 @@ class QueryResponse(BaseModel):
     query_id: UUID
     question: str
     intent: str | None = None
-    strategy: Literal["generated_sql", "cache", "out_of_scope"]
+    strategy: Literal["generated_sql", "cache", "out_of_scope", "needs_clarification"]
     outcome: Outcome
 
     #: El SQL ejecutado se devuelve al usuario. Es la prueba de que el numero no fue

@@ -9,6 +9,7 @@ from mira_api.llm.client import Completion
 from mira_api.nlq.prompts import SQL_SYSTEM_PROMPT
 from mira_api.nlq.sql_generation import (
     GenerationFailed,
+    NeedsClarification,
     OutOfScope,
     PriorTurn,
     _strip_markdown_fence,
@@ -18,6 +19,52 @@ from mira_api.nlq.sql_generation import (
 
 MAX_ROWS = 500
 MAX_ATTEMPTS = 3
+
+
+@pytest.mark.parametrize(
+    ("answer", "outcome"),
+    [
+        ("QUESTION_TOO_BROAD", Outcome.REJECTED_QUESTION_TOO_BROAD),
+        ("  intent_unclear  ", Outcome.REJECTED_INTENT_UNCLEAR),
+        ("```text\nQUESTION_TOO_BROAD\n```", Outcome.REJECTED_QUESTION_TOO_BROAD),
+    ],
+)
+@pytest.mark.asyncio
+async def test_aclaracion_no_valida_sql_ni_reintenta(answer: str, outcome: Outcome) -> None:
+    client = _ScriptedClient([answer])
+    with pytest.raises(NeedsClarification) as err:
+        await generate_validated_sql(
+            client,  # type: ignore[arg-type]
+            model="claude-sonnet-5",
+            system=[],
+            question="computadoras guatemala",
+            countries=["GT"],
+            max_rows=MAX_ROWS,
+        )
+    assert len(client.calls) == 1
+    assert err.value.outcome is outcome
+    assert err.value.usage.input_tokens == 100
+    assert err.value.attempts[0].outcome is outcome
+    assert not err.value.attempts[0].accepted
+
+
+@pytest.mark.asyncio
+async def test_aclaracion_tras_reintento_conserva_uso_y_auditoria() -> None:
+    client = _ScriptedClient(["select * from mart.processes", "INTENT_UNCLEAR"])
+    with pytest.raises(NeedsClarification) as err:
+        await generate_validated_sql(
+            client,  # type: ignore[arg-type]
+            model="claude-sonnet-5",
+            system=[],
+            question="y eso como queda?",
+            countries=["GT"],
+            max_rows=MAX_ROWS,
+        )
+    assert err.value.usage.input_tokens == 200
+    assert [a.outcome for a in err.value.attempts] == [
+        Outcome.REJECTED_SQL_RELATION,
+        Outcome.REJECTED_INTENT_UNCLEAR,
+    ]
 
 
 def _completion(text: str) -> Completion:

@@ -69,6 +69,31 @@ _CONTEO_CR = PriorTurn(
 
 CASES: list[Case] = [
     Case(
+        id="computadoras_consulta_abierta",
+        question="computadoras guatemala",
+        countries=["GT"],
+        allowed_outcomes=frozenset({Outcome.REJECTED_QUESTION_TOO_BROAD}),
+        expect_sql=False,
+        expect_verified_narrative=False,
+        regression="Un tema sin el tipo de resultado debe pedir detalle, no dar un error generico.",
+    ),
+    Case(
+        id="computadoras_consulta_especifica",
+        question="Muéstrame las contrataciones públicas en Guatemala relacionadas con computadoras",
+        countries=["GT"],
+        allowed_outcomes=frozenset({Outcome.OK, Outcome.OK_ZERO_ROWS}),
+        expect_relations=frozenset({"query.v_process"}),
+        expect_countries=frozenset({"GT"}),
+    ),
+    Case(
+        id="intencion_sin_contexto",
+        question="y eso como queda?",
+        countries=["GT"],
+        allowed_outcomes=frozenset({Outcome.REJECTED_INTENT_UNCLEAR}),
+        expect_sql=False,
+        expect_verified_narrative=False,
+    ),
+    Case(
         id="conteo_simple",
         question="cuantos procesos hay en Costa Rica",
         countries=_CR,

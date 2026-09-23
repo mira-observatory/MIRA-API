@@ -271,3 +271,22 @@ Las tres conexiones del servicio tienen privilegios separados:
 ## Licencia
 
 MIT. Ver [LICENSE](LICENSE).
+
+## Consultas que necesitan aclaracion
+
+El generador puede responder `QUESTION_TOO_BROAD` cuando reconoce el tema pero
+falta el tipo de resultado, o `INTENT_UNCLEAR` cuando no logra entender la
+intencion con el contexto disponible. El pipeline devuelve respectivamente
+`REJECTED_QUESTION_TOO_BROAD` y `REJECTED_INTENT_UNCLEAR`, con estrategia
+`needs_clarification`, sin ejecutar SQL ni generar narrativa. El JSON y los
+eventos SSE `error` y `done` comparten esos codigos. No se deduce ambiguedad de
+la longitud de la pregunta ni de un error de SQL, de red o de base de datos.
+
+Antes de desplegar esta version de la API, aplicar en la base existente
+`MIRA-ETL/sql/001_init.sql` con el rol administrador. Este archivo crea las
+tablas y actualiza los CHECK de auditoria tambien en bases existentes, sin
+modificar sus registros. Desplegar tambien MIRA-WEB para mostrar
+los mensajes de aclaracion en espanol e ingles. El catalogo de evaluaciones
+incluye la consulta abierta, su reformulacion especifica y una intencion sin
+contexto; `python -m mira_api.evals.runner` los verifica contra el modelo y la
+base configurados (consume llamadas reales).

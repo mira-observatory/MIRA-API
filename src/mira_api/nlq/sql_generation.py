@@ -15,10 +15,29 @@ from mira_api.nlq.validator import SqlRejected, ValidatedSql, validate
 #: Sentinela que el modelo devuelve cuando la pregunta no se puede responder
 #: con las columnas disponibles. No pasa por el validador -- se detecta antes.
 OUT_OF_SCOPE_SENTINEL = "OUT_OF_SCOPE"
+_CLARIFICATION_OUTCOMES = {
+    "QUESTION_TOO_BROAD": Outcome.REJECTED_QUESTION_TOO_BROAD,
+    "INTENT_UNCLEAR": Outcome.REJECTED_INTENT_UNCLEAR,
+}
+
+
+class NeedsClarification(Exception):
+    """El modelo pide detalle antes de generar SQL; no es un fallo tecnico."""
+
+    def __init__(
+        self, outcome: Outcome, usage: Usage, attempts: list[GenerationAttempt]
+    ) -> None:
+        super().__init__(outcome.value)
+        self.outcome = outcome
+        self.usage = usage
+        self.attempts = attempts
+
 
 class OutOfScope(Exception):
     """El modelo determino que la pregunta no es respondible con el esquema
     disponible. No es un error -- es el sistema funcionando."""
+
+    outcome = Outcome.OUT_OF_SCOPE
 
     def __init__(self, question: str, usage: Usage, attempts: list[GenerationAttempt]) -> None:
         super().__init__(question)
@@ -156,9 +175,9 @@ async def generate_validated_sql(
     `max_attempts` veces pasandole el error como retroalimentacion. Nunca ejecuta SQL
     -- eso es responsabilidad de quien llama, con el resultado ya validado.
 
-    Levanta OutOfScope si el modelo determina que la pregunta no es
-    respondible, y GenerationFailed si se agotan los intentos sin una consulta
-    valida (el ultimo rechazo, con su regla exacta). Ambas excepciones cargan
+    Levanta NeedsClarification si falta detalle o no se entiende la intencion,
+    OutOfScope si la pregunta no es respondible, y GenerationFailed si se
+    agotan los intentos sin SQL valido. Las tres excepciones cargan
     el uso acumulado de tokens -- un intento fallido tambien cuesta.
     """
     messages = _build_messages(question, countries, history or [])
@@ -177,6 +196,13 @@ async def generate_validated_sql(
         )
         raw = completion.text
         sql_text = _strip_markdown_fence(raw)
+
+        clarification = _CLARIFICATION_OUTCOMES.get(sql_text.upper())
+        if clarification is not None:
+            attempts.append(
+                GenerationAttempt(attempt_no, sql_text, accepted=False, outcome=clarification)
+            )
+            raise NeedsClarification(clarification, usage, attempts)
 
         if sql_text.strip().upper() == OUT_OF_SCOPE_SENTINEL:
             attempts.append(

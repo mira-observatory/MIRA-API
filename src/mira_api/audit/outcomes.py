@@ -35,6 +35,8 @@ class Outcome(StrEnum):
 
     # --- rechazo: el sistema decidio no ejecutar ---------------------------
     OUT_OF_SCOPE = "OUT_OF_SCOPE"
+    REJECTED_QUESTION_TOO_BROAD = "REJECTED_QUESTION_TOO_BROAD"
+    REJECTED_INTENT_UNCLEAR = "REJECTED_INTENT_UNCLEAR"
     REJECTED_ENTITY_NOT_FOUND = "REJECTED_ENTITY_NOT_FOUND"
     # No es un error: es el comportamiento deseado ante nombres parecidos.
     REJECTED_ENTITY_AMBIGUOUS = "REJECTED_ENTITY_AMBIGUOUS"
@@ -79,6 +81,8 @@ class Outcome(StrEnum):
 UNANSWERED_OUTCOMES: frozenset[Outcome] = frozenset(
     {
         Outcome.OUT_OF_SCOPE,
+        Outcome.REJECTED_QUESTION_TOO_BROAD,
+        Outcome.REJECTED_INTENT_UNCLEAR,
         Outcome.REJECTED_ENTITY_NOT_FOUND,
     }
 )
