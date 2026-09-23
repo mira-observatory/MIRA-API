@@ -38,6 +38,7 @@ ALLOWED_RELATIONS: frozenset[str] = frozenset(
         "query.v_process_buyers",
         "query.v_items",
         "query.v_awards",
+        "query.v_awards_all",
         "query.v_award_items",
         "query.v_award_suppliers",
     }
@@ -253,7 +254,7 @@ def _check_no_item_award_fanout(relations: set[str]) -> None:
     numero real. El primero se ve perfectamente creible (es solo un COUNT muy
     grande) y no hay forma de notar desde el resultado que esta inflado.
     """
-    if "query.v_awards" in relations and "query.v_items" in relations:
+    if relations & {"query.v_awards", "query.v_awards_all"} and "query.v_items" in relations:
         if "query.v_award_items" not in relations:
             raise SqlRejected(
                 Outcome.REJECTED_SQL_FUNCTION,

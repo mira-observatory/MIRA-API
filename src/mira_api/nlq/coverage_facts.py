@@ -22,7 +22,7 @@ _ENTITY_SQL: dict[str, tuple[str, str]] = {
         "query.v_awards",
         "select p.country_code, count(*) as n, "
         "min(a.award_date)::date as dt_min, max(a.award_date)::date as dt_max "
-        "from query.v_awards a join query.v_process p on p.process_id = a.process_id "
+        "from query.v_awards_all a join query.v_process p on p.process_id = a.process_id "
         "where p.country_code = any(%(paises)s) group by p.country_code",
     ),
     "proveedores": (
@@ -47,7 +47,7 @@ _ENTITY_SQL: dict[str, tuple[str, str]] = {
         "select p.country_code, count(*) as n, "
         "null::date as dt_min, null::date as dt_max "
         "from query.v_award_items ai "
-        "join query.v_awards a on a.award_id = ai.award_id "
+        "join query.v_awards_all a on a.award_id = ai.award_id "
         "join query.v_process p on p.process_id = a.process_id "
         "where p.country_code = any(%(paises)s) group by p.country_code",
     ),
@@ -190,6 +190,8 @@ def _entities_for(relations: frozenset[str]) -> list[str]:
     adjudicaciones puede fallar por cualquiera de las dos, y decir cual es
     justamente el punto.
     """
+    if "query.v_awards_all" in relations:
+        relations = relations | {"query.v_awards"}
     return [name for name, (view, _) in _ENTITY_SQL.items() if view in relations]
 
 
@@ -378,4 +380,3 @@ async def diagnose_empty_result(
         warnings=[],
         coverage=CoverageNote(countries=countries, rows_total=total_disponible),
     )
-

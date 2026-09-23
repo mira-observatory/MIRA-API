@@ -632,6 +632,22 @@ async def run_query(
         )
         warnings = diagnosis.warnings
         coverage_note = diagnosis.coverage
+        if not warnings and "query.v_awards" in result.validated.relations:
+            warnings.append(
+                Warning(
+                    code="NO_VALID_AWARDS",
+                    message_es=(
+                        "No se encontraron adjudicaciones válidas para los filtros consultados. "
+                        "Por defecto se excluyen las canceladas, pendientes, fallidas y los "
+                        "registros con errores. Puedes pedir esos estados explícitamente."
+                    ),
+                    message_en=(
+                        "No valid awards matched the requested filters. Cancelled, pending, "
+                        "unsuccessful awards and records with errors are excluded by default. "
+                        "You can ask for those states explicitly."
+                    ),
+                )
+            )
 
     if rows_result.row_count > 0:
         mezcla = mixed_currency_warning(columns, rows_result.rows, countries)

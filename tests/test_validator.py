@@ -389,10 +389,11 @@ def test_permite_seguir_mostrando_montos_tal_cual() -> None:
 # conto 1,722,048 en vez de 1,317, por el join directo via process_id)
 
 
-def test_rechaza_v_items_unida_a_v_awards_sin_v_award_items() -> None:
+@pytest.mark.parametrize("view", ["v_awards", "v_awards_all"])
+def test_rechaza_v_items_unida_a_v_awards_sin_v_award_items(view: str) -> None:
     sql = (
         "select i.item_description, count(*) from query.v_process p "
-        "join query.v_awards a on a.process_id = p.process_id "
+        f"join query.{view} a on a.process_id = p.process_id "
         "join query.v_items i on i.process_id = p.process_id "
         "where p.country_code = 'CR' group by 1"
     )
@@ -428,6 +429,7 @@ def test_permite_v_items_sola_con_v_process_sin_v_awards() -> None:
     assert validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES).sql
 
 
-def test_permite_v_awards_sola_sin_v_items() -> None:
-    sql = "select award_id, awarded_amount from query.v_awards"
+@pytest.mark.parametrize("view", ["v_awards", "v_awards_all"])
+def test_permite_v_awards_sola_sin_v_items(view: str) -> None:
+    sql = f"select award_id, awarded_amount from query.{view}"
     assert validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES).sql

@@ -52,6 +52,7 @@ class Warning(BaseModel):
         "MISSING_COUNTRY_IN_RESULT",
         "LIMIT_MAY_HIDE_ROWS",
         "NO_MATCH_FOR_TERM",
+        "NO_VALID_AWARDS",
     ]
     message_es: str
     #: El mismo aviso en ingles. Se agrega en vez de renombrar `message_es`

@@ -40,6 +40,17 @@ class _FakeExecutor:
 AWARDS = frozenset({"query.v_awards", "query.v_process"})
 
 
+@pytest.mark.parametrize("view", ["query.v_awards", "query.v_awards_all"])
+async def test_cobertura_cuenta_tambien_excluidas_para_no_declarar_datos_ausentes(view):
+    executor = _FakeExecutor({"query.v_awards_all": [{"country_code": "GT", "n": 1}]})
+    diagnosis = await diagnose_empty_result(
+        executor, countries=["GT"], relations=frozenset({view})  # type: ignore[arg-type]
+    )
+    assert diagnosis.warnings == []
+    assert "from query.v_awards_all " in executor.consultas[0]
+    assert diagnosis.coverage.rows_total == 1
+
+
 @pytest.mark.asyncio
 async def test_avisa_cuando_el_pais_no_tiene_esa_entidad_cargada() -> None:
     """Caso real: Nicaragua tiene 409 procesos pero cero adjudicaciones. El

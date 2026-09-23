@@ -82,6 +82,8 @@ def evaluate(case: Case, response: QueryResponse, *, max_rows: int) -> CaseResul
 
     if sql is not None:
         relations = _relations_of(sql, case.countries, max_rows)
+        if "query.v_awards" in case.expect_relations and "query.v_awards_all" in relations:
+            failures.append("incluye estados excluidos en una consulta de adjudicaciones validas")
         faltantes = case.expect_relations - relations
         if faltantes:
             failures.append(f"el SQL no toca {', '.join(sorted(faltantes))}")

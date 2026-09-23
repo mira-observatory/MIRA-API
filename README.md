@@ -283,10 +283,35 @@ eventos SSE `error` y `done` comparten esos codigos. No se deduce ambiguedad de
 la longitud de la pregunta ni de un error de SQL, de red o de base de datos.
 
 Antes de desplegar esta version de la API, aplicar en la base existente
-`MIRA-ETL/sql/001_init.sql` con el rol administrador. Este archivo crea las
-tablas y actualiza los CHECK de auditoria tambien en bases existentes, sin
-modificar sus registros. Desplegar tambien MIRA-WEB para mostrar
+`MIRA-ETL/sql/001_init.sql` y `MIRA-ETL/sql/002_indexes_and_views.sql` con el
+rol administrador. El primero define las tablas y el segundo actualiza los
+CHECK de auditoria tambien en bases existentes, sin modificar sus registros. Desplegar tambien MIRA-WEB para mostrar
 los mensajes de aclaracion en espanol e ingles. El catalogo de evaluaciones
 incluye la consulta abierta, su reformulacion especifica y una intencion sin
 contexto; `python -m mira_api.evals.runner` los verifica contra el modelo y la
 base configurados (consume llamadas reales).
+
+## Adjudicaciones validas por defecto
+
+`query.v_awards` filtra antes de ordenar, contar o limitar: solo procesos
+`AWARDED`, `CONTRACTED` o `COMPLETED`, calidad `COMPLETE`/`PARTIAL` y
+normalizacion `PROCESSED`. Excluye montos negativos y estados individuales
+publicados distintos de `active`/`complete`. Cuando la fuente no publica el
+estado individual, se usa el estado del proceso; no se inventa uno activo.
+Esto no acredita pago ni ejecucion completada.
+
+El ETL conserva `award_status` por adjudicacion, incluso si el mismo proceso
+contiene adjudicaciones activas y canceladas. `query.v_awards_all` permite
+consultar estados excluidos solo cuando se piden explicitamente, mostrando
+sus estados. Una consulta habitual nunca amplía la busqueda a esa vista
+porque no encontro resultados. El diagnostico de cobertura cuenta todos los
+registros para no confundir exclusiones con ausencia de datos cargados.
+
+Los cambios permanecen en los tres SQL existentes: `001_init.sql` define la
+columna, `002_indexes_and_views.sql` incorpora la columna a bases existentes,
+recupera estados OCDS del `raw_payload` guardado y crea las vistas; `003_seed_base_data.sql`
+actualiza el diccionario. Aplicarlos en orden con el propietario de los objetos
+antes de desplegar ETL/API. Verificar los permisos SELECT de `mira_query` para
+la nueva vista segun `MIRA-ETL/docs/database_security.md`, y reiniciar la API
+para recargar el diccionario. No se requiere una nueva descarga para los
+estados recuperables por identificador de adjudicacion desde el payload.

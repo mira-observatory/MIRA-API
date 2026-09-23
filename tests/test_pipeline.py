@@ -1001,3 +1001,54 @@ def test_sin_aviso_si_la_consulta_no_toca_v_items() -> None:
     aviso = unnormalised_item_warning(frozenset({"query.v_process", "query.v_awards"}))
 
     assert aviso is None
+
+
+@pytest.mark.asyncio
+async def test_sin_adjudicaciones_validas_explica_el_filtro_sin_ampliarlo() -> None:
+    client = _ScriptedClient([
+        "select awarded_amount from query.v_awards order by awarded_amount desc limit 1"
+    ])
+    events: list[tuple[str, dict]] = []
+    response = await run_query(
+        QueryRequest(question="la adjudicacion mas cara en Guatemala", countries=["GT"]),
+        client=client,  # type: ignore[arg-type]
+        executor=_ScriptedExecutor(result=Rows(columns=[], rows=[], row_count=0, truncated=False)),  # type: ignore[arg-type]
+        log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
+        system_blocks=[], model="claude-sonnet-5", narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS, budget_daily_usd=BUDGET_DAILY, budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject", prompt_version="test", app_version="test",
+        on_event=lambda event, data: events.append((event, data)),
+    )
+    # The fake also reports no coverage, so that diagnosis retains precedence.
+    assert response.outcome is Outcome.OK_ZERO_ROWS
+    assert response.warnings[0].code == "PARTIAL_COVERAGE"
+    assert "v_awards_all" not in response.sql_executed
+
+
+@pytest.mark.asyncio
+async def test_explicacion_de_cero_adjudicaciones_validas_llega_al_stream(monkeypatch) -> None:
+    from mira_api.nlq.coverage_facts import EmptyResultDiagnosis
+
+    events: list[tuple[str, dict]] = []
+
+    async def diagnosis(*args, **kwargs):
+        return EmptyResultDiagnosis(warnings=[], coverage=None)
+
+    monkeypatch.setattr("mira_api.nlq.pipeline.diagnose_empty_result", diagnosis)
+    response = await run_query(
+        QueryRequest(question="la adjudicacion mas cara en Guatemala", countries=["GT"]),
+        client=_ScriptedClient([  # type: ignore[arg-type]
+            "select awarded_amount from query.v_awards order by awarded_amount desc limit 1"
+        ]),
+        executor=_ScriptedExecutor(result=Rows(columns=[], rows=[], row_count=0, truncated=False)),  # type: ignore[arg-type]
+        log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
+        system_blocks=[], model="claude-sonnet-5", narrative_model="claude-haiku-4-5-20251001",
+        max_rows=MAX_ROWS, budget_daily_usd=BUDGET_DAILY, budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject", prompt_version="test", app_version="test",
+        on_event=lambda event, data: events.append((event, data)),
+    )
+    assert response.outcome is Outcome.OK_ZERO_ROWS
+    assert response.warnings[0].code == "NO_VALID_AWARDS"
+    assert response.narrative == response.warnings[0].message_es
+    warning = next(data for event, data in events if event == "warnings")
+    assert warning["warnings"][0]["code"] == "NO_VALID_AWARDS"

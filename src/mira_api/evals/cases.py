@@ -69,6 +69,39 @@ _CONTEO_CR = PriorTurn(
 
 CASES: list[Case] = [
     Case(
+        id="adjudicacion_mas_cara_valida_gt",
+        question="cual es la adjudicacion mas cara en Guatemala",
+        countries=["GT"],
+        allowed_outcomes=frozenset({Outcome.OK, Outcome.OK_ZERO_ROWS}),
+        expect_relations=frozenset({"query.v_awards"}),
+        expect_countries=frozenset({"GT"}),
+        regression="Una adjudicacion cancelada no debe ganar un ranking por defecto.",
+    ),
+    Case(
+        id="adjudicacion_cancelada_explicita_gt",
+        question="cual es la adjudicacion cancelada mas cara en Guatemala",
+        countries=["GT"],
+        allowed_outcomes=frozenset({Outcome.OK, Outcome.OK_ZERO_ROWS}),
+        expect_relations=frozenset({"query.v_awards_all"}),
+        expect_countries=frozenset({"GT"}),
+    ),
+    Case(
+        id="adjudicaciones_con_errores_explicitos_gt",
+        question="muestrame adjudicaciones de Guatemala con errores de validacion de datos",
+        countries=["GT"],
+        allowed_outcomes=frozenset({Outcome.OK, Outcome.OK_ZERO_ROWS}),
+        expect_relations=frozenset({"query.v_awards_all"}),
+        expect_countries=frozenset({"GT"}),
+    ),
+    Case(
+        id="adjudicaciones_sin_canceladas_gt",
+        question="muestrame las adjudicaciones mas caras de Guatemala sin canceladas",
+        countries=["GT"],
+        allowed_outcomes=frozenset({Outcome.OK, Outcome.OK_ZERO_ROWS}),
+        expect_relations=frozenset({"query.v_awards"}),
+        expect_countries=frozenset({"GT"}),
+    ),
+    Case(
         id="computadoras_consulta_abierta",
         question="computadoras guatemala",
         countries=["GT"],
