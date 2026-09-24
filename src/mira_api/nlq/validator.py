@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import sqlglot
 from sqlglot import exp
 
 from mira_api.audit.outcomes import Outcome
+from mira_api.nlq.ranking import (
+    asks_single_winner,
+    asks_supplier_total,
+    normalise,
+    single_currency,
+    winners_per_currency,
+)
 
 #: Unicas relaciones que el servicio puede consultar. El rol de base de datos
 #: (mira_query) solo tiene USAGE sobre el esquema `query`, asi que esta lista es la
@@ -35,6 +43,7 @@ ALLOWED_RELATIONS: frozenset[str] = frozenset(
         "query.v_process",
         "query.v_buyers",
         "query.v_suppliers",
+        "query.v_supplier_award_totals",
         "query.v_process_buyers",
         "query.v_items",
         "query.v_awards",
@@ -96,10 +105,14 @@ class ValidatedSql:
 #: Vistas que traen country_code. Si el SQL las toca, tiene que filtrar por
 #: pais -- v_awards/v_items/v_process_buyers/v_award_* no tienen la columna,
 #: se llega a ellas por process_id/award_id ya acotado via v_process.
-_COUNTRY_SCOPED_VIEWS = frozenset({"query.v_process", "query.v_buyers", "query.v_suppliers"})
+_COUNTRY_SCOPED_VIEWS = frozenset({
+    "query.v_process", "query.v_buyers", "query.v_suppliers", "query.v_supplier_award_totals",
+})
 
 
-def validate(sql: str, *, max_rows: int, countries: list[str]) -> ValidatedSql:
+def validate(
+    sql: str, *, max_rows: int, countries: list[str], question: str = "",
+) -> ValidatedSql:
     """Valida SQL sobre el arbol sintactico, nunca con expresiones regulares.
 
     Devuelve el SQL reescrito con LIMIT forzado, o levanta SqlRejected con el codigo
@@ -150,6 +163,7 @@ def validate(sql: str, *, max_rows: int, countries: list[str]) -> ValidatedSql:
     _check_no_money_aggregation(tree)
     _check_no_money_arithmetic(tree)
     _check_no_item_award_fanout(relations)
+    _check_ranking_intent(tree, relations, question)
 
     if relations & _COUNTRY_SCOPED_VIEWS:
         _check_country_scope(tree, countries)
@@ -170,7 +184,90 @@ def validate(sql: str, *, max_rows: int, countries: list[str]) -> ValidatedSql:
 
 #: Columnas de dinero. No hay una columna de monto unificada, y es a proposito:
 #: cada monto viene con su moneda al lado.
-_MONEY_COLUMNS = frozenset({"awarded_amount", "estimated_amount"})
+_MONEY_COLUMNS = frozenset({"awarded_amount", "estimated_amount", "total_awarded_amount"})
+
+
+def _check_ranking_intent(tree: exp.Select, relations: set[str], question: str) -> None:
+    totals = "query.v_supplier_award_totals" in relations
+    per_currency = winners_per_currency(tree)
+    if asks_supplier_total(question) and not totals:
+        raise SqlRejected(
+            Outcome.REJECTED_SQL_COST, "supplier_total_required",
+            "Se pide acumulado por proveedor, no la adjudicacion individual mas grande. "
+            "Usa query.v_supplier_award_totals (total_awarded_amount ya sumado por moneda).",
+        )
+    if totals:
+        # The snapshot is already aggregated. Rejoining or resumming can count
+        # awards twice or combine different currencies; there is no need for it.
+        if (len(list(tree.find_all(exp.Select))) != 1 or len(list(tree.find_all(exp.Table))) != 1
+                or tree.args.get("group") or tree.args.get("joins")
+                or any(tree.find_all(exp.AggFunc)) or any(tree.find_all(exp.Window))):
+            raise SqlRejected(
+                Outcome.REJECTED_SQL_FUNCTION, "supplier_totals_shape",
+                "Consulta directamente query.v_supplier_award_totals, sin JOIN ni agregaciones.",
+            )
+        if re.search(
+            r"\b(?:19|20)\d{2}\b|\b(anos?|mes(?:es)?|semanas?|dias?|ayer|hoy|desde|hasta|"
+            r"years?|months?|weeks?|days?|yesterday|today|since|between)\b", normalise(question),
+        ):
+            raise SqlRejected(
+                Outcome.REJECTED_SQL_COST, "supplier_totals_period",
+                "Esta vista cubre todo el historial cargado, no periodos. "
+                "No sustituyas el periodo pedido por todo el historial: responde OUT_OF_SCOPE.",
+            )
+        if re.search(
+            r"\b(cancelad\w*|anulad\w*|fallid\w*|pendient\w*|cancelled|canceled|failed|pending)\b",
+            normalise(question),
+        ) and not re.search(r"\b(sin|exclu\w*|without|excluding)\b", normalise(question)):
+            raise SqlRejected(
+                Outcome.REJECTED_SQL_COST, "supplier_totals_status",
+                "El acumulado solo incluye adjudicaciones validas. Para acumulados de estados "
+                "excluidos responde OUT_OF_SCOPE; no presentes el acumulado valido como respuesta.",
+            )
+        projected = {c.name for item in tree.expressions for c in item.find_all(exp.Column)}
+        if not {"currency_code", "total_awarded_amount", "shared_award_count"} <= projected:
+            raise SqlRejected(
+                Outcome.REJECTED_SQL_FUNCTION, "supplier_totals_columns",
+                "Incluye currency_code, total_awarded_amount y shared_award_count en SELECT.",
+            )
+        if not single_currency(tree) and not per_currency:
+            raise SqlRejected(
+                Outcome.REJECTED_SQL_FUNCTION, "supplier_totals_currency",
+                "No compares acumulados de monedas distintas. Sin moneda explicitamente "
+                "pedida, usa SELECT DISTINCT ON (currency_code) ... ORDER BY currency_code, "
+                "total_awarded_amount DESC, supplier_id para dar un ganador por moneda.",
+            )
+        if single_currency(tree) and question and not re.search(
+            r"\b(gtq|usd|crc|hnl|nio|eur|quetzales?|dolares?|colones?|lempiras?|"
+            r"cordobas?|euros?|dollars?)\b", normalise(question),
+        ):
+            raise SqlRejected(
+                Outcome.REJECTED_SQL_FUNCTION, "supplier_totals_currency_not_requested",
+                "No supongas una moneda: devuelve un ganador por moneda con DISTINCT ON.",
+            )
+        if not single_currency(tree) and per_currency:
+            order = tree.args.get("order")
+            ordering = order.expressions if order else []
+            if (len(ordering) < 2
+                    or not isinstance(ordering[0].this, exp.Column)
+                    or ordering[0].this.name != "currency_code"
+                    or not isinstance(ordering[1].this, exp.Column)
+                    or ordering[1].this.name != "total_awarded_amount"
+                    or not ordering[1].args.get("desc")):
+                raise SqlRejected(
+                    Outcome.REJECTED_SQL_COST, "supplier_totals_order",
+                    "Para el ganador de cada moneda, ORDER BY currency_code, "
+                    "total_awarded_amount DESC, supplier_id.",
+                )
+            # LIMIT 1 after DISTINCT ON would silently hide other currencies.
+            tree.set("limit", None)
+    if asks_single_winner(question) and not (totals and per_currency and not single_currency(tree)):
+        limit = tree.args.get("limit")
+        if limit is None or limit.expression.name != "1":
+            raise SqlRejected(
+                Outcome.REJECTED_SQL_COST, "single_winner_limit",
+                "La pregunta pide un solo ganador. Ordena por el criterio pedido y usa LIMIT 1.",
+            )
 
 #: Agregaciones que producen un numero que no existe en ningun renglon.
 #: MIN y MAX quedan fuera a proposito: devuelven un valor que si esta en los

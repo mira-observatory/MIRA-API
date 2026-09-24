@@ -229,7 +229,9 @@ async def generate_validated_sql(
             raise OutOfScope(question, usage, attempts)
 
         try:
-            validated = validate(sql_text, max_rows=max_rows, countries=countries)
+            validated = validate(
+                sql_text, max_rows=max_rows, countries=countries, question=question,
+            )
         except SqlRejected as err:
             attempts.append(
                 GenerationAttempt(

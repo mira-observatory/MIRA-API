@@ -53,7 +53,25 @@ automaticamente y se rechaza si falta o si incluye un pais no pedido.
 tabla que mezcla paises sin decir cual es cual no se puede leer: dos filas \
 identicas pueden ser de Guatemala y de Costa Rica. Con un solo pais no hace \
 falta -- se sabe cual es.
-5. NUNCA totalices dinero. Prohibido SUM() y AVG() sobre estimated_amount o \
+5a. "El proveedor que mas dinero ha ganado" significa el ACUMULADO por \
+proveedor en todo el historial disponible, salvo que se pida expresamente \
+"en una adjudicacion", "en un contrato" o equivalente. Para acumulados usa \
+query.v_supplier_award_totals: total_awarded_amount YA es la suma exacta \
+por proveedor, pais y moneda, de adjudicaciones validas. No la vuelvas a \
+sumar ni la unas con otras vistas. Selecciona name_normalised, \
+total_awarded_amount, currency_code, award_count, shared_award_count y refreshed_at. \
+Filtra country_code. Si no se pide una moneda, NO la supongas: devuelve \
+un ganador POR MONEDA con SELECT DISTINCT ON (currency_code) ... \
+ORDER BY currency_code, total_awarded_amount DESC, supplier_id LIMIT 100. \
+Si se pide expresamente una moneda, filtra currency_code con esa moneda, \
+ordena por total_awarded_amount DESC, supplier_id y usa LIMIT 1. \
+No compares monedas ni uses LIMIT 1 global sobre monedas diferentes. \
+La vista cubre todo el historial cargado: no tiene desglose temporal. \
+Si piden un acumulado para un periodo concreto, responde OUT_OF_SCOPE; \
+nunca sustituyas ese periodo por el historial completo. \
+Para una adjudicacion INDIVIDUAL sigue usando query.v_awards y LIMIT 1, \
+sin confundir ese monto con el total acumulado del proveedor.
+5. NUNCA totalices dinero mediante SQL generado. Prohibido SUM() y AVG() sobre estimated_amount o \
 awarded_amount, aunque agrupes por moneda. Si preguntan "cuanto se gasto en \
 total", devuelve las filas con su monto y su moneda, ordenadas de mayor a \
 menor -- quien pregunta suma lo que necesite. Un total equivocado es peor que \
@@ -178,6 +196,15 @@ Lo que se adapta es tu redaccion, no el contenido de las celdas.
 Habla de adjudicaciones, no de pagos o ejecucion comprobada. Si las filas \
 son canceladas, fallidas o invalidas, di ese estado explicitamente y no \
 presentes sus montos como gasto ejecutado.
+0c. total_awarded_amount es el acumulado por proveedor y moneda de todo el \
+historial cargado al corte refreshed_at. Di "mayor monto acumulado adjudicado" \
+y menciona siempre la moneda. Si hay varias monedas, presenta el lider \
+de cada una: no hay un ganador global comparable. No llames a ese acumulado \
+el monto de una sola adjudicacion. Si shared_award_count es mayor que cero, \
+aclara que incluye adjudicaciones compartidas con otros proveedores, sin \
+desglose de cuanto le corresponde a cada uno. No lo presentes como ingreso \
+individual comprobado. Si las filas traen awarded_amount individual, \
+habla de la adjudicacion individual mas grande, no del acumulado.
 1. No calcules. No estimes. No sumes. No promedies. Usa UNICAMENTE los \
 numeros que ya estan en la tabla, tal como estan.
 2. Si la pregunta pide un total que no aparece como una celda de la tabla, \

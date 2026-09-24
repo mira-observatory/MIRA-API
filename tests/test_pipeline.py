@@ -900,7 +900,8 @@ async def test_ganador_no_se_presenta_al_redactor_como_lista_incompleta(
     rows = [{"supplier_name": "VIATLA", "monto_adjudicado": 990553882.10,
              "currency_code": "GTQ"}]
     response = await run_query(
-        QueryRequest(question="Cual es el proveedor que mas dinero ha ganado en Guatemala?",
+        QueryRequest(question="Cual es el proveedor que mas dinero ha ganado "
+                     "en una adjudicacion en Guatemala?",
                      countries=["GT"], narrative=True),
         client=client,  # type: ignore[arg-type]
         executor=_ScriptedExecutor(result=Rows(  # type: ignore[arg-type]

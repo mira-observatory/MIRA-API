@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 #: Columnas cuyo nombre indica dinero -- ninguna vista tiene una columna de
 #: tipo "money" real, es siempre numeric + currency_code aparte (Parte 1.6:
 #: "No existe columna de monto unificada, y es a proposito").
-_MONEY_COLUMNS = {"estimated_amount", "awarded_amount"}
+_MONEY_COLUMNS = {"estimated_amount", "awarded_amount", "total_awarded_amount"}
 _DATE_COLUMNS_SUFFIXES = ("_date", "_at")
 
 #: Claves sinteticas de MIRA -- sin significado fuera de esta base, ni
