@@ -880,6 +880,46 @@ async def test_aviso_y_redactor_reciben_el_limite_real_del_resultado(
     assert len(payload["muestra_para_redactar"]) == 25
 
 
+@pytest.mark.parametrize("truncated", [False, True])
+@pytest.mark.asyncio
+async def test_ganador_no_se_presenta_al_redactor_como_lista_incompleta(
+    truncated: bool,
+) -> None:
+    narrative = "El proveedor con mayor monto adjudicado es VIATLA, con 990553882.10 GTQ."
+    client = _ScriptedClient([
+        "select s.name_normalised as supplier_name, "
+        "a.awarded_amount as monto_adjudicado, a.currency_code "
+        "from query.v_process p "
+        "join query.v_awards a using (process_id) "
+        "join query.v_award_suppliers asup on asup.award_id = a.award_id "
+        "join query.v_suppliers s on s.supplier_id = asup.supplier_id "
+        "where p.country_code = 'GT' "
+        "order by monto_adjudicado desc nulls last limit 1",
+        narrative,
+    ])
+    rows = [{"supplier_name": "VIATLA", "monto_adjudicado": 990553882.10,
+             "currency_code": "GTQ"}]
+    response = await run_query(
+        QueryRequest(question="Cual es el proveedor que mas dinero ha ganado en Guatemala?",
+                     countries=["GT"], narrative=True),
+        client=client,  # type: ignore[arg-type]
+        executor=_ScriptedExecutor(result=Rows(  # type: ignore[arg-type]
+            columns=list(rows[0]), rows=rows, row_count=1, truncated=truncated)),
+        log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
+        system_blocks=[], model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001", max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY, budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject", prompt_version="0.1.0", app_version="0.1.0",
+    )
+    await wait_for_audit_tasks()
+    assert response.narrative == narrative
+    assert not any(w.code == "LIMIT_MAY_HIDE_ROWS" for w in response.warnings)
+    payload = json.loads(str(client.calls[-1][0]["content"]))
+    assert payload["filas_en_resultado"] == 1
+    assert payload["limite_alcanzado"] is False
+    assert payload["truncado"] is truncated
+
+
 def test_sin_aviso_de_pais_ausente_con_un_solo_pais_pedido() -> None:
     rows = [{"country_code": "CR", "name_normalised": "ICE", "cantidad": 5}]
 

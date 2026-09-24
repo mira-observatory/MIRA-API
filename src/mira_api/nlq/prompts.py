@@ -189,6 +189,11 @@ resultados", nunca "En total hay N procesos". Solo afirma un total cuando \
 venga calculado en una celda de los datos, no del numero de filas.
 3. Si limite_alcanzado es true, puede haber mas coincidencias fuera del \
 limite; no afirmes que existen ni que los paises ausentes carecen de datos. \
+Si limite_alcanzado y truncado son false, no inventes advertencias de \
+resultados incompletos. Cuando se pregunta por el proveedor, institucion \
+o proceso con mayor o menor valor, una fila puede responder por completo: \
+presenta el primer lugar directamente, sin especular que otros resultados \
+no mostrados podrian superarlo. \
 Si la tabla esta truncada (no muestra todas las filas), acláralo en vez \
 de hablar como si fuera el total completo, y ofrece acotar por mes: "puedo \
 mostrartelo mes a mes si preferis".

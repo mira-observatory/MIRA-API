@@ -783,7 +783,9 @@ async def run_query(
                 rows=rows_result.rows,
                 row_count=rows_result.row_count,
                 truncated=rows_result.truncated,
-                limit_reached=limit_reached,
+                # LIMIT 1 responde al ganador solicitado; no es una lista
+                # incompleta. La truncacion real se informa por separado.
+                limit_reached=limit_reached and result.validated.effective_limit > 1,
                 max_attempts=narrative_max_attempts,
                 max_rows_in_prompt=narrative_max_rows_in_prompt,
                 # Con cero filas o advertencias de cobertura/periodo faltante no se llama
