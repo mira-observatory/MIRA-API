@@ -49,6 +49,42 @@ def _fallback_template(row_count: int, truncated: bool, language: Language = "es
     return textos["rows"].format(n=row_count, suffix=suffix)
 
 
+def _currency_leaders_summary(rows: list[dict[str, Any]], language: Language) -> str | None:
+    """The order of currency codes must never become an overall supplier rank."""
+    required = {"name_normalised", "total_awarded_amount", "currency_code", "shared_award_count"}
+    if len(rows) < 2 or not all(required <= row.keys() for row in rows):
+        return None
+    if len({row["currency_code"] for row in rows}) != len(rows):
+        return None
+    leaders = "; ".join(
+        f"{row['currency_code']}: {row['name_normalised']}, "
+        f"{row['total_awarded_amount']} {row['currency_code']}"
+        for row in rows
+    )
+    shared = ", ".join(row["name_normalised"] for row in rows if row["shared_award_count"] > 0)
+    if language == "en":
+        text = (
+            "The suppliers with the highest cumulative awarded amount "
+            f"in each currency are {leaders}."
+        )
+        text += (
+            " Amounts in different currencies are not comparable, so there is no overall winner."
+        )
+        if shared:
+            text += (
+                f" The total for {shared} includes shared awards without an individual breakdown."
+            )
+    else:
+        text = f"Los proveedores con mayor monto acumulado adjudicado en cada moneda son {leaders}."
+        text += " Los montos de monedas distintas no son comparables; no hay un ganador global."
+        if shared:
+            text += (
+                f" El acumulado de {shared} incluye adjudicaciones compartidas "
+                "sin desglose individual."
+            )
+    return text
+
+
 def _build_user_message(
     question: str,
     rows: list[dict[str, Any]],
@@ -94,6 +130,7 @@ async def generate_narrative(
     max_tokens: int = 512,
     empty_reason: str | None = None,
     language: Language = "es",
+    currency_leaders: bool = False,
 ) -> NarrativeResult:
     """T3.5 (redaccion) + T3.6 (verificador anti-alucinacion). Nunca bloquea
     la respuesta: si el modelo sigue inventando numeros despues del
@@ -111,6 +148,11 @@ async def generate_narrative(
             unverified_numbers=[],
             usage=usage,
         )
+
+    if currency_leaders and not truncated:
+        summary = _currency_leaders_summary(rows, language)
+        if summary is not None:
+            return NarrativeResult(text=summary, verified=True, unverified_numbers=[], usage=usage)
 
     sistema = NARRATIVE_SYSTEM_PROMPT.format(
         idioma=NARRATIVE_LANGUAGE_NAMES.get(language, NARRATIVE_LANGUAGE_NAMES["es"])

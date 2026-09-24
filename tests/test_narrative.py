@@ -29,6 +29,33 @@ class _ScriptedClient:
 ROWS = [{"process_id": "p1", "awarded_amount": 7992}]
 
 
+@pytest.mark.parametrize("language", ["es", "en"])
+@pytest.mark.asyncio
+async def test_currency_leaders_never_become_a_global_ranking(language) -> None:
+    client = _ScriptedClient([])
+    result = await generate_narrative(
+        client, model="test", question="Proveedor con mas dinero en Honduras",
+        rows=[
+            {"name_normalised": "Proveedor A", "currency_code": "HNL",
+             "total_awarded_amount": "6000850444.87", "shared_award_count": 2},
+            {"name_normalised": "Proveedor B", "currency_code": "USD",
+             "total_awarded_amount": "199577898.74", "shared_award_count": 0},
+        ],
+        row_count=2, truncated=False, language=language, currency_leaders=True,
+    )
+    assert result.verified
+    assert not client.calls
+    assert "HNL: Proveedor A" in result.text
+    assert "USD: Proveedor B" in result.text
+    assert "6000850444.87 HNL" in result.text
+    assert "199577898.74 USD" in result.text
+    assert ("no hay un ganador global" if language == "es" else "no overall winner") in result.text
+    shared_note = (
+        "sin desglose individual" if language == "es" else "without an individual breakdown"
+    )
+    assert shared_note in result.text
+
+
 @pytest.mark.asyncio
 async def test_narrativa_valida_pasa_en_el_primer_intento() -> None:
     client = _ScriptedClient(["Se encontro un proceso adjudicado por 7992."])

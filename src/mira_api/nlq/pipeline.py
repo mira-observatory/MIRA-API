@@ -269,6 +269,19 @@ def mixed_currency_warning(
     faltantes = sorted(pedidos - presentes) if presentes else []
 
     if len(monedas) >= 2:
+        if any(column.name == "total_awarded_amount" for column in columns):
+            return Warning(
+                code="MIXED_CURRENCY",
+                message_es=(
+                    f"Los acumulados están separados por moneda ({', '.join(monedas)}). "
+                    "No son comparables entre monedas y no hay un ganador global."
+                ),
+                message_en=(
+                    f"Totals are separated by currency ({', '.join(monedas)}). "
+                    "Amounts across currencies are not comparable and there is no overall winner."
+                ),
+                details={"monedas": monedas},
+            )
         return Warning(
             code="MIXED_CURRENCY",
             message_es=(
@@ -786,6 +799,7 @@ async def run_query(
                 # LIMIT 1 responde al ganador solicitado; no es una lista
                 # incompleta. La truncacion real se informa por separado.
                 limit_reached=limit_reached and result.validated.effective_limit > 1,
+                currency_leaders="query.v_supplier_award_totals" in result.validated.relations,
                 max_attempts=narrative_max_attempts,
                 max_rows_in_prompt=narrative_max_rows_in_prompt,
                 # Con cero filas o advertencias de cobertura/periodo faltante no se llama

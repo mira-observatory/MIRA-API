@@ -224,11 +224,15 @@ def _check_ranking_intent(tree: exp.Select, relations: set[str], question: str) 
                 "El acumulado solo incluye adjudicaciones validas. Para acumulados de estados "
                 "excluidos responde OUT_OF_SCOPE; no presentes el acumulado valido como respuesta.",
             )
-        projected = {c.name for item in tree.expressions for c in item.find_all(exp.Column)}
-        if not {"currency_code", "total_awarded_amount", "shared_award_count"} <= projected:
+        projected = {item.alias_or_name for item in tree.expressions}
+        required = {
+            "name_normalised", "currency_code", "total_awarded_amount", "shared_award_count",
+        }
+        if not required <= projected:
             raise SqlRejected(
                 Outcome.REJECTED_SQL_FUNCTION, "supplier_totals_columns",
-                "Incluye currency_code, total_awarded_amount y shared_award_count en SELECT.",
+                "Incluye name_normalised, currency_code, total_awarded_amount y "
+                "shared_award_count en SELECT, conservando esos nombres de columna.",
             )
         if not single_currency(tree) and not per_currency:
             raise SqlRejected(
