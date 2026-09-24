@@ -183,7 +183,13 @@ numeros que ya estan en la tabla, tal como estan.
 2. Si la pregunta pide un total que no aparece como una celda de la tabla, \
 di explicitamente que ese dato no esta disponible -- nunca lo inventes ni lo \
 calcules a mano.
-3. Si la tabla esta truncada (no muestra todas las filas), acláralo en vez \
+2b. filas_en_resultado indica cuantas filas se muestran, NO el total de \
+coincidencias en la base. Si citas esa cantidad, escribe "Se muestran N \
+resultados", nunca "En total hay N procesos". Solo afirma un total cuando \
+venga calculado en una celda de los datos, no del numero de filas.
+3. Si limite_alcanzado es true, puede haber mas coincidencias fuera del \
+limite; no afirmes que existen ni que los paises ausentes carecen de datos. \
+Si la tabla esta truncada (no muestra todas las filas), acláralo en vez \
 de hablar como si fuera el total completo, y ofrece acotar por mes: "puedo \
 mostrartelo mes a mes si preferis".
 3b. Si las filas cubren un periodo mas corto que el que se pregunto (por \

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 
 import psycopg
@@ -81,10 +82,12 @@ def _completion(text: str) -> Completion:
 class _ScriptedClient:
     def __init__(self, responses: list[str]) -> None:
         self._responses = list(responses)
+        self.calls: list[list[dict]] = []
 
     async def complete_text(
         self, *, model: str, system: list, messages: list, max_tokens: int
     ) -> Completion:
+        self.calls.append([dict(m) for m in messages])
         return _completion(self._responses.pop(0))
 
 
@@ -832,6 +835,49 @@ def test_sin_aviso_de_pais_ausente_si_todos_aparecen() -> None:
     ]
 
     assert missing_country_warning(_count_columns(), rows, ["GT", "HN"]) is None
+
+
+@pytest.mark.parametrize(
+    ("row_count", "truncated", "limited"),
+    [(100, False, True), (99, False, False), (100, True, True)],
+)
+@pytest.mark.asyncio
+async def test_aviso_y_redactor_reciben_el_limite_real_del_resultado(
+    row_count: int, truncated: bool, limited: bool,
+) -> None:
+    client = _ScriptedClient([
+        "select country_code, title from query.v_process "
+        "where country_code in ('GT', 'HN', 'CR', 'NI') "
+        "order by published_date desc nulls last limit 100",
+        f"Se muestran {row_count} procesos.",
+    ])
+    rows = [{"country_code": "GT" if i % 2 else "HN", "title": "Pavimentacion"}
+            for i in range(row_count)]
+    response = await run_query(
+        QueryRequest(question="Muestra las obras recientes de pavimentacion",
+                     countries=["GT", "HN", "CR", "NI"], narrative=True),
+        client=client,  # type: ignore[arg-type]
+        executor=_ScriptedExecutor(result=Rows(  # type: ignore[arg-type]
+            columns=["country_code", "title"], rows=rows,
+            row_count=row_count, truncated=truncated)),
+        log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
+        system_blocks=[], model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001", max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY, budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject", prompt_version="0.1.0", app_version="0.1.0",
+    )
+    warning = next(w for w in response.warnings if w.code == "MISSING_COUNTRY_IN_RESULT")
+    assert "Guatemala, Honduras" in warning.message_es
+    assert "Costa Rica, Nicaragua" in warning.message_es
+    assert ("fuera de este límite" in warning.message_es) is limited
+    assert ("beyond this limit" in warning.message_en) is limited
+    assert "modalidad" not in warning.message_es
+    payload = json.loads(str(client.calls[-1][0]["content"]))
+    assert payload["filas_en_resultado"] == row_count
+    assert "filas_totales" not in payload
+    assert payload["limite_alcanzado"] is (row_count == 100)
+    assert payload["truncado"] is truncated
+    assert len(payload["muestra_para_redactar"]) == 25
 
 
 def test_sin_aviso_de_pais_ausente_con_un_solo_pais_pedido() -> None:

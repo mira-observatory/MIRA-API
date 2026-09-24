@@ -55,12 +55,14 @@ def _build_user_message(
     row_count: int,
     truncated: bool,
     max_rows_in_prompt: int,
+    limit_reached: bool = False,
 ) -> str:
     sample = rows[:max_rows_in_prompt]
     payload = {
         "pregunta": question,
-        "filas_totales": row_count,
+        "filas_en_resultado": row_count,
         "truncado": truncated,
+        "limite_alcanzado": limit_reached,
         # El nombre importa: esto es una muestra para redactar, NO lo que ve la
         # persona. Cuando la clave se llamaba "filas_mostradas", el modelo lo
         # leyo literal y escribio "estoy mostrando solo los primeros 25"
@@ -68,7 +70,9 @@ def _build_user_message(
         # ve menos de lo que ve es tan enganoso como lo contrario.
         "muestra_para_redactar": sample,
         "aclaracion": (
-            f"La persona ve las {row_count} filas completas en una tabla. "
+            f"Se muestran {row_count} filas en la tabla de resultados. "
+            "Ese número no es un conteo del total de coincidencias en la base. "
+            "Si mencionas esa cantidad, di 'Se muestran', nunca 'En total hay'. "
             f"Arriba solo van {len(sample)} como muestra para que redactes; "
             "nunca digas que se muestran unicamente esas."
         ),
@@ -84,6 +88,7 @@ async def generate_narrative(
     rows: list[dict[str, Any]],
     row_count: int,
     truncated: bool,
+    limit_reached: bool = False,
     max_attempts: int = 2,
     max_rows_in_prompt: int = 25,
     max_tokens: int = 512,
@@ -114,7 +119,7 @@ async def generate_narrative(
         {
             "role": "user",
             "content": _build_user_message(
-                question, rows, row_count, truncated, max_rows_in_prompt
+                question, rows, row_count, truncated, max_rows_in_prompt, limit_reached
             ),
         }
     ]

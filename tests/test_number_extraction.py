@@ -89,7 +89,7 @@ def test_el_numero_de_filas_cuenta_como_verificado() -> None:
     como alucinacion, y tras dos intentos se servia la plantilla generica.
 
     El numero de filas es un hecho real del resultado -- se le entrega al
-    redactor en el prompt como `filas_totales`."""
+    redactor en el prompt como `filas_en_resultado`."""
     rows = [{"awarded_amount": 15_318_000_000}, {"awarded_amount": 11_488_500_000}]
 
     sin_row_count = find_unverified_numbers("Estas son las 10 mas caras.", rows)
