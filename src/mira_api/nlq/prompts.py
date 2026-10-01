@@ -69,8 +69,12 @@ No compares monedas ni uses LIMIT 1 global sobre monedas diferentes. \
 La vista cubre todo el historial cargado: no tiene desglose temporal. \
 Si piden un acumulado para un periodo concreto, responde OUT_OF_SCOPE; \
 nunca sustituyas ese periodo por el historial completo. \
-Para una adjudicacion INDIVIDUAL sigue usando query.v_awards y LIMIT 1, \
-sin confundir ese monto con el total acumulado del proveedor.
+Para adjudicaciones INDIVIDUALES sigue usando query.v_awards, \
+sin confundir sus montos con el total acumulado del proveedor. Usa LIMIT 1 \
+solo para un ganador singular; si piden las 5 mas caras, usa LIMIT 5. \
+Mencionar proveedor y monto como columnas de un listado NO pide un \
+acumulado por proveedor. Tampoco lo pide un ranking de instituciones con \
+conteo de proveedores y MAX del monto de una adjudicacion individual.
 5. NUNCA totalices dinero mediante SQL generado. Prohibido SUM() y AVG() sobre estimated_amount o \
 awarded_amount, aunque agrupes por moneda. Si preguntan "cuanto se gasto en \
 total", devuelve las filas con su monto y su moneda, ordenadas de mayor a \
@@ -159,7 +163,7 @@ existentes: usa p.title ILIKE '%medicamento%' OR p.description ILIKE \
 description en LOWER, UPPER, UNACCENT, COALESCE ni concatenaciones dentro \
 del filtro: eso impide usar sus indices. ILIKE ya ignora mayusculas. \
 Filtra pais y periodo junto al texto antes de agrupar. Para rankings por \
-CANTIDAD de adjudicaciones de una categoria, agrupa primero por \
+CANTIDAD de adjudicaciones POR PROVEEDOR de una categoria, agrupa primero por \
 p.country_code y asp.supplier_id; une query.v_suppliers para obtener el \
 nombre solo DESPUES de agrupar y limitar. No agrupes millones de filas \
 por nombres de proveedor ni unas items o compradores si no hacen falta. \
@@ -186,6 +190,70 @@ FROM ranking r
 JOIN query.v_suppliers s ON s.supplier_id = r.supplier_id
 ORDER BY r.award_count DESC NULLS LAST, r.country_code, r.supplier_id
 LIMIT 100
+6e. Si piden N adjudicaciones individuales con institucion y proveedor, \
+elige primero N adjudicaciones distintas en un CTE (filtro de categoria, \
+pais, periodo y ORDER BY monto DESC NULLS LAST, award_id LIMIT N). Despues \
+agrega los nombres de compradores por process_id y de proveedores por \
+award_id en subconsultas separadas con STRING_AGG. Usa LEFT JOIN o \
+subconsultas escalares para conservar adjudicaciones sin alguno de esos \
+datos. Unir ambos puentes antes de LIMIT multiplica las filas y puede \
+mostrar 5 relaciones de una misma adjudicacion en vez de 5 adjudicaciones. \
+Ejemplo de 5 adjudicaciones de medicamentos en Guatemala:
+WITH top_awards AS (
+  SELECT a.award_id, a.process_id, a.awarded_amount, a.currency_code
+  FROM query.v_process p
+  JOIN query.v_awards a ON a.process_id = p.process_id
+  WHERE p.country_code = 'GT' AND a.awarded_amount IS NOT NULL
+    AND (p.title ILIKE '%medicamento%' OR p.description ILIKE '%medicamento%')
+  ORDER BY a.awarded_amount DESC NULLS LAST, a.award_id
+  LIMIT 5
+)
+SELECT t.award_id, t.awarded_amount, t.currency_code,
+  (SELECT STRING_AGG(b.name_normalised, ', ' ORDER BY b.name_normalised)
+   FROM query.v_process_buyers pb
+   JOIN query.v_buyers b ON b.buyer_id = pb.buyer_id
+   WHERE pb.process_id = t.process_id) AS buyer_name,
+  (SELECT STRING_AGG(s.name_normalised, ', ' ORDER BY s.name_normalised)
+   FROM query.v_award_suppliers asp
+   JOIN query.v_suppliers s ON s.supplier_id = asp.supplier_id
+   WHERE asp.award_id = t.award_id) AS supplier_name
+FROM top_awards t
+ORDER BY t.awarded_amount DESC NULLS LAST, t.award_id
+LIMIT 5
+6f. Un ranking de INSTITUCIONES con adjudicaciones y proveedores distintos \
+usa query.v_process_buyers (process_id -> buyer_id), NO v_supplier_award_totals. \
+Cuenta COUNT(DISTINCT a.award_id) y COUNT(DISTINCT asp.supplier_id); \
+MAX(a.awarded_amount) es el monto de una adjudicacion individual y esta \
+PERMITIDO, no es un acumulado. No uses SUM, AVG ni conversiones. Filtra \
+a.currency_code = 'GTQ' si piden quetzales y para Guatemala en 2025 usa \
+a.award_date >= '2025-01-01' AND a.award_date < '2026-01-01', sin EXTRACT \
+para aprovechar el indice de fecha. query.v_awards ya excluye canceladas; \
+no agregues award_status <> 'cancelled', pues descartaria los NULL validos. \
+Agrupa y limita por buyer_id antes de unir los nombres; ordena por conteo \
+de adjudicaciones DESC y buyer_id para desempatar. Conserva LEFT JOIN a \
+award_suppliers para contar tambien adjudicaciones sin proveedor cargado. \
+Ejemplo de las 5 instituciones pedidas, con moneda y maximo individual:
+WITH top_buyers AS (
+  SELECT pb.buyer_id, COUNT(DISTINCT a.award_id) AS award_count,
+         COUNT(DISTINCT asp.supplier_id) AS supplier_count,
+         MAX(a.awarded_amount) AS max_awarded_amount
+  FROM query.v_process p
+  JOIN query.v_awards a ON a.process_id = p.process_id
+  JOIN query.v_process_buyers pb ON pb.process_id = p.process_id
+  LEFT JOIN query.v_award_suppliers asp ON asp.award_id = a.award_id
+  WHERE p.country_code = 'GT' AND a.currency_code = 'GTQ'
+    AND a.award_date >= '2025-01-01' AND a.award_date < '2026-01-01'
+    AND (p.title ILIKE '%medicamento%' OR p.description ILIKE '%medicamento%')
+  GROUP BY pb.buyer_id
+  ORDER BY award_count DESC NULLS LAST, pb.buyer_id
+  LIMIT 5
+)
+SELECT b.name_normalised AS buyer_name, r.award_count, r.supplier_count,
+       r.max_awarded_amount, 'GTQ' AS currency_code
+FROM top_buyers r
+JOIN query.v_buyers b ON b.buyer_id = r.buyer_id
+ORDER BY r.award_count DESC NULLS LAST, r.buyer_id
+LIMIT 5
 7. Si la pregunta no se puede responder con las columnas disponibles, o si \
 pide datos de un anio o periodo que esta fuera de la cobertura disponible para \
 el pais (por ejemplo Honduras en 2025 o 2026, Guatemala en 2020 a 2024, Costa \

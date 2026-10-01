@@ -30,14 +30,33 @@ def asks_single_winner(question: str) -> bool:
 
 
 def asks_supplier_total(question: str) -> bool:
+    """Require a monetary ranking attached to the supplier being ranked.
+
+    Mentioning supplier names/counts alongside an award amount does not ask
+    for cumulative supplier earnings. Global keyword co-occurrence used to
+    reject award lists and buyer rankings that include those extra columns.
+    """
     text = normalise(question)
     individual = re.search(
         r"\b(en (?:una|un|una sola|un solo) (?:adjudicacion|contrato)|"
         r"(?:single|one) (?:award|contract)|(?:adjudicacion|contrato) (?:mas|de mayor))\b",
         text,
     )
+    supplier = r"(?:proveedor(?:es)?|empresa(?:s)?|supplier(?:s)?|compan(?:y|ies))"
+    criterion = (
+        r"(?:mas\s+(?:dinero|monto|montos)|mayor\s+(?:monto|dinero|acumulado)|"
+        r"most\s+money|highest\s+(?:amount|earnings)|"
+        r"(?:monto\s+)?(?:total|acumulado|acumulados)|total\s+(?:amount|earnings))"
+    )
+    linked_ranking = re.search(
+        rf"\b{supplier}\b[^,.;:!?]{{0,80}}\b{criterion}\b", text,
+    ) or re.search(
+        rf"\b{criterion}\b[^,.;:!?]{{0,50}}\b(?:por|del|de los|per|by)\s+{supplier}\b",
+        text,
+    )
     return bool(
         not individual
+        and linked_ranking
         and re.search(r"\b(proveedor(?:es)?|empresa(?:s)?|supplier(?:s)?|compan(?:y|ies))\b", text)
         and re.search(r"\b(dinero|monto|montos|money|amount|earned|acumulado|acumulados)\b", text)
         and re.search(r"\b(mas|mayor|most|highest|total|acumulado|acumulados)\b", text)

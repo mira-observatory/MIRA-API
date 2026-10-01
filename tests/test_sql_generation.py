@@ -108,7 +108,7 @@ def test_strip_markdown_fence() -> None:
 async def test_reintenta_busqueda_sin_indices_y_acepta_ranking_optimizado() -> None:
     # Ejercita el SQL completo que el modelo recibe como ejemplo, incluyendo
     # los CTE y el filtro de pais; no llama al modelo ni a la base reales.
-    optimized = SQL_SYSTEM_PROMPT.split("WITH ranking AS (", 1)[1].split("\n7.", 1)[0]
+    optimized = SQL_SYSTEM_PROMPT.split("WITH ranking AS (", 1)[1].split("\n6e.", 1)[0]
     optimized = "WITH ranking AS (" + optimized.strip()
     client = _ScriptedClient([
         "select p.process_id from query.v_process p "

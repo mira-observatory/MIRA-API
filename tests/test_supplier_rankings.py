@@ -23,10 +23,16 @@ INDIVIDUAL = (
 
 @pytest.mark.parametrize("question", [
     QUESTION, "Which supplier earned the most money in Guatemala?",
+    "Que proveedores tienen mayor monto adjudicado?",
+    "Muestra el monto acumulado por proveedor en Guatemala",
+    "Proveedor con mayor monto acumulado",
 ])
 def test_default_is_cumulative(question: str) -> None:
     assert asks_supplier_total(question)
-    assert asks_single_winner(question)
+
+
+def test_singular_cumulative_winner() -> None:
+    assert asks_single_winner(QUESTION)
 
 
 @pytest.mark.parametrize("suffix", [
