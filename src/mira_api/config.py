@@ -40,7 +40,8 @@ class Settings(BaseSettings):
     log_pool_max_size: int = 4
     web_pool_min_size: int = 0
     web_pool_max_size: int = 2
-    statement_timeout_ms: int = 8000
+    # Rankings por categoria pueden recorrer varias adjudicaciones por proceso.
+    statement_timeout_ms: int = Field(default=30000, gt=0)
 
     # --- modelo de lenguaje ------------------------------------------------
     # No hay catalogo de plantillas: toda pregunta contestable se responde con

@@ -104,6 +104,29 @@ def test_strip_markdown_fence() -> None:
     assert _strip_markdown_fence("select 1") == "select 1"
 
 
+@pytest.mark.asyncio
+async def test_reintenta_busqueda_sin_indices_y_acepta_ranking_optimizado() -> None:
+    # Ejercita el SQL completo que el modelo recibe como ejemplo, incluyendo
+    # los CTE y el filtro de pais; no llama al modelo ni a la base reales.
+    optimized = SQL_SYSTEM_PROMPT.split("WITH ranking AS (", 1)[1].split("\n7.", 1)[0]
+    optimized = "WITH ranking AS (" + optimized.strip()
+    client = _ScriptedClient([
+        "select p.process_id from query.v_process p "
+        "where p.country_code = 'GT' and lower(p.title) like '%medicamento%'",
+        optimized,
+    ])
+    result = await generate_validated_sql(
+        client,  # type: ignore[arg-type]
+        model="test", system=[], countries=["GT"], max_rows=MAX_ROWS,
+        question="Que proveedores tienen mas adjudicaciones de medicamentos?",
+    )
+    assert result.attempts[0].rejection_rule == "process_search_index"
+    assert result.attempts[1].accepted
+    assert "process_search_index" in str(client.calls[1][-1]["content"])
+    assert "COUNT(*)" in result.validated.sql
+    assert result.validated.effective_limit == 100
+
+
 def test_build_system_blocks_marca_cache_control() -> None:
     blocks = build_system_blocks([])
     assert len(blocks) == 1

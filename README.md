@@ -72,6 +72,16 @@ Solo tres etapas involucran al modelo de IA, y ninguna de ellas toca un numero.
 
 ## Portabilidad
 
+Las consultas NLQ tienen un limite de 30 segundos por sentencia, configurable
+con `STATEMENT_TIMEOUT_MS` (entero positivo). El pool aplica ese limite a las
+conexiones de lectura. Al agotarse, la API devuelve `FAILED_DB_TIMEOUT` tanto
+en JSON como en SSE; la interfaz muestra un mensaje especifico de tiempo agotado.
+La generacion de SQL usa busquedas ILIKE directas sobre titulo y descripcion
+para aprovechar los indices de trigramas de MIRA-ETL. El validador solicita
+otro intento si el filtro envuelve esas columnas en funciones o concatenaciones.
+Para rankings por cantidad de adjudicaciones, el prompt indica agrupar por
+identificador y limitar antes de unir los nombres de proveedores.
+
 El servicio se conecta a un PostgreSQL estandar mediante `DATABASE_URL_QUERY`. Hoy ese
 PostgreSQL esta alojado en Supabase; **no se usa ninguna funcionalidad propia de
 Supabase** (ni PostgREST, ni auth, ni RLS como autorizacion de la aplicacion). El

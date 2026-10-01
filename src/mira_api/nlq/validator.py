@@ -163,6 +163,7 @@ def validate(
     _check_no_money_aggregation(tree)
     _check_no_money_arithmetic(tree)
     _check_no_item_award_fanout(relations)
+    _check_indexed_process_search(tree, relations)
     _check_ranking_intent(tree, relations, question)
 
     if relations & _COUNTRY_SCOPED_VIEWS:
@@ -364,6 +365,30 @@ def _check_no_item_award_fanout(relations: set[str]) -> None:
                 "un proceso puede tener varias adjudicaciones y varios items, y esa "
                 "union arma un producto cartesiano que infla cualquier conteo o "
                 "listado. Une query.v_award_items en el medio (award_id -> item_id).",
+            )
+
+
+def _check_indexed_process_search(tree: exp.Expression, relations: set[str]) -> None:
+    """Reintenta filtros que inutilizan los indices de texto del proceso.
+
+    No reescribe el predicado: quitar UNACCENT o concatenaciones podria cambiar
+    los resultados. El generador recibe la regla y produce otro SQL validado.
+    Las funciones en el SELECT y sobre otras columnas siguen permitidas.
+    """
+    if "query.v_process" not in relations:
+        return
+    for predicate in tree.find_all(exp.Like, exp.ILike):
+        target = predicate.this
+        if isinstance(target, exp.Column):
+            continue
+        if any(c.name.lower() in {"title", "description"} for c in target.find_all(exp.Column)):
+            raise SqlRejected(
+                Outcome.REJECTED_SQL_COST,
+                "process_search_index",
+                "Usa title ILIKE patron OR description ILIKE patron directamente, "
+                "sin LOWER, UNACCENT, COALESCE ni concatenaciones sobre estas columnas. "
+                "Los indices de trigramas solo cubren las columnas originales; "
+                "ILIKE ya ignora mayusculas.",
             )
 
 

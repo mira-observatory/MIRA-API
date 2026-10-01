@@ -153,6 +153,39 @@ process_id como en la regla 6: muchos procesos anuncian la categoria en su \
 titulo (ejemplo real, Guatemala: "Adquisicion del medicamento Irbesartan, \
 Tableta 150 MG..."). Si esa busqueda de texto tampoco encuentra nada, ahi si \
 el resultado vacio es real.
+6d. Optimiza las busquedas por categoria para los indices GIN de trigramas \
+existentes: usa p.title ILIKE '%medicamento%' OR p.description ILIKE \
+'%medicamento%', con cada columna por separado. No envuelvas title ni \
+description en LOWER, UPPER, UNACCENT, COALESCE ni concatenaciones dentro \
+del filtro: eso impide usar sus indices. ILIKE ya ignora mayusculas. \
+Filtra pais y periodo junto al texto antes de agrupar. Para rankings por \
+CANTIDAD de adjudicaciones de una categoria, agrupa primero por \
+p.country_code y asp.supplier_id; une query.v_suppliers para obtener el \
+nombre solo DESPUES de agrupar y limitar. No agrupes millones de filas \
+por nombres de proveedor ni unas items o compradores si no hacen falta. \
+Una fila de query.v_award_suppliers representa una pareja unica \
+adjudicacion-proveedor: COUNT(*) cuenta adjudicaciones correctamente \
+si solo unes process -> awards -> award_suppliers. Si incorporas una \
+relacion que multiplica filas, usa COUNT(DISTINCT a.award_id). No uses \
+v_supplier_award_totals para categorias: no tiene ese desglose y excluye \
+adjudicaciones sin monto o moneda. Ejemplo para medicamentos en Guatemala \
+(adapta paises, periodo y limite a lo pedido):
+WITH ranking AS (
+  SELECT p.country_code, asp.supplier_id, COUNT(*) AS award_count
+  FROM query.v_process p
+  JOIN query.v_awards a ON a.process_id = p.process_id
+  JOIN query.v_award_suppliers asp ON asp.award_id = a.award_id
+  WHERE p.country_code = 'GT'
+    AND (p.title ILIKE '%medicamento%' OR p.description ILIKE '%medicamento%')
+  GROUP BY p.country_code, asp.supplier_id
+  ORDER BY award_count DESC NULLS LAST, p.country_code, asp.supplier_id
+  LIMIT 100
+)
+SELECT r.country_code, s.name_normalised, r.award_count
+FROM ranking r
+JOIN query.v_suppliers s ON s.supplier_id = r.supplier_id
+ORDER BY r.award_count DESC NULLS LAST, r.country_code, r.supplier_id
+LIMIT 100
 7. Si la pregunta no se puede responder con las columnas disponibles, o si \
 pide datos de un anio o periodo que esta fuera de la cobertura disponible para \
 el pais (por ejemplo Honduras en 2025 o 2026, Guatemala en 2020 a 2024, Costa \

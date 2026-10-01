@@ -9,6 +9,33 @@ MAX_ROWS = 500
 COUNTRIES = ["CR"]
 
 
+@pytest.mark.parametrize("target", [
+    "lower(p.title)",
+    "coalesce(p.description, '')",
+    "p.title || ' ' || p.description",
+])
+@pytest.mark.parametrize("operator", ["LIKE", "ILIKE"])
+def test_reintenta_busqueda_que_impide_usar_indices(target: str, operator: str) -> None:
+    sql = (
+        "select p.process_id from query.v_process p "
+        f"where p.country_code = 'CR' and {target} {operator} '%medicamento%'"
+    )
+    with pytest.raises(SqlRejected) as err:
+        validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES)
+    assert err.value.outcome is Outcome.REJECTED_SQL_COST
+    assert err.value.rule == "process_search_index"
+
+
+def test_busqueda_indexada_permite_funciones_en_proyeccion() -> None:
+    result = validate(
+        "select coalesce(p.title, p.description) from query.v_process p "
+        "where p.country_code = 'CR' and "
+        "(p.title ilike '%medicamento%' or p.description ilike '%medicamento%')",
+        max_rows=MAX_ROWS, countries=COUNTRIES,
+    )
+    assert "COALESCE" in result.sql
+
+
 def test_acepta_select_sobre_vista_permitida() -> None:
     sql = "select country_code, count(*) from query.v_process where country_code = 'CR' group by 1"
     result = validate(sql, max_rows=MAX_ROWS, countries=COUNTRIES)
