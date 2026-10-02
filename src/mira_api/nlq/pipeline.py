@@ -14,6 +14,7 @@ from mira_api.audit.writer import QueryLogRecord, write_audit_log
 from mira_api.db.executor import DatabaseError, DatabaseTimeoutErrors, ReadOnlyExecutor, Rows
 from mira_api.db.log_executor import LogExecutor
 from mira_api.llm.client import ClaudeClient
+from mira_api.nlq.country_scope import resolve_country_scope
 from mira_api.nlq.coverage_facts import diagnose_empty_result
 from mira_api.nlq.language import detect_language
 from mira_api.nlq.narrative import generate_narrative
@@ -432,7 +433,13 @@ async def run_query(
     # misma persona puede preguntar en espanol y despues en ingles, y cada
     # respuesta tiene que seguir a su propia pregunta.
     language = detect_language(question)
-    countries = [c.upper() for c in request.countries]
+    countries = resolve_country_scope(
+        question, request.countries,
+        previous=(
+            resolve_country_scope(request.history[-1].question, request.history[-1].countries)
+            if request.history else None
+        ),
+    )
     timings_ms: dict[str, int] = {}
     error_stage = "budget"
     error_type: str | None = None
@@ -499,7 +506,7 @@ async def run_query(
                 history=[
                     PriorTurn(
                         question=turn.question,
-                        countries=[c.upper() for c in turn.countries],
+                        countries=resolve_country_scope(turn.question, turn.countries),
                         sql=turn.sql,
                     )
                     for turn in request.history
@@ -595,7 +602,7 @@ async def run_query(
         audit_attempts = result.attempts
         error_stage = "accounting"
         await _charge_global_budget(log_executor, model=model, usage=result.usage)
-        _emit("sql", {"sql": result.validated.sql})
+        _emit("sql", {"sql": result.validated.sql, "countries_filter": countries})
 
         error_stage = "query_execution"
         db_start = time.monotonic()

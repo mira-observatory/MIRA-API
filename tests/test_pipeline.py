@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import psycopg
 import pytest
 
-from mira_api.api.schemas import Column, QueryRequest
+from mira_api.api.schemas import Column, ConversationTurn, QueryRequest
 from mira_api.audit.outcomes import Outcome
 from mira_api.db.executor import Rows
 from mira_api.llm.client import Completion
@@ -797,6 +797,92 @@ def test_sin_aviso_si_la_tabla_no_trae_montos() -> None:
 
 
 # --- Aviso de pais ausente en un ranking SIN montos --------------------------
+
+
+@pytest.mark.parametrize("money", [False, True])
+@pytest.mark.parametrize("present", [["GT", "CR"], ["GT"]])
+@pytest.mark.asyncio
+async def test_comparacion_explicita_no_confunde_paises_disponibles_con_paises_pedidos(
+    money: bool, present: list[str],
+) -> None:
+    question = (
+        "Compara Guatemala y Costa Rica durante el primer trimestre de 2025. "
+        "Por país y mes de publicación, muestra cantidad de procesos y cantidad "
+        "de modalidades de contratación distintas. Ordena por país y mes."
+    )
+    sql = (
+        "select p.country_code, a.awarded_amount, a.currency_code "
+        "from query.v_process p join query.v_awards a using (process_id) "
+        "where p.country_code in ('GT', 'CR')"
+        if money else
+        "select country_code, count(*) as process_count from query.v_process "
+        "where country_code in ('GT', 'CR') group by country_code"
+    )
+    # Un pais disponible pero no pedido tambien se rechaza en el SQL.
+    client = _ScriptedClient([sql.replace("'GT', 'CR'", "'GT', 'CR', 'HN'"), sql])
+    rows = [
+        {"country_code": country, **(
+            {"awarded_amount": 10, "currency_code": "GTQ"} if money else {"process_count": 10}
+        )} for country in present
+    ]
+    events: list[tuple[str, dict]] = []
+    log_executor = _FakeLogExecutor()
+    response = await run_query(
+        QueryRequest(question=question, countries=["GT", "HN", "CR", "NI"], narrative=False),
+        client=client,  # type: ignore[arg-type]
+        executor=_ScriptedExecutor(result=Rows(  # type: ignore[arg-type]
+            columns=list(rows[0]), rows=rows, row_count=len(rows), truncated=False)),
+        log_executor=log_executor,  # type: ignore[arg-type]
+        system_blocks=[], model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001", max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY, budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject", prompt_version="0.1.0", app_version="0.1.0",
+        on_event=lambda event, data: events.append((event, data)),
+    )
+    await wait_for_audit_tasks()
+    assert response.outcome is Outcome.OK
+    assert response.countries_filter == ["GT", "CR"]
+    assert str(client.calls[0][0]["content"]).startswith("Paises: GT, CR\n")
+    assert events[0][1]["countries_filter"] == ["GT", "CR"]
+    assert log_executor.query_attempt_rows[0]["rejection_rule"] == "country_not_allowed"
+    if len(present) == 2:
+        assert response.warnings == []
+        assert not any(event == "warnings" for event, _ in events)
+    else:
+        assert len(response.warnings) == 1
+        assert response.warnings[0].details["paises_ausentes"] == ["CR"]
+
+
+@pytest.mark.parametrize(("question", "expected"), [
+    ("¿Y en 2024?", ["GT", "CR"]),
+    ("¿Y en Honduras?", ["HN"]),
+    ("Ahora compara todos los países", ["GT", "HN", "CR", "NI"]),
+])
+@pytest.mark.asyncio
+async def test_seguimiento_resuelve_el_alcance_del_pais_sin_volver_al_default(
+    question: str, expected: list[str],
+) -> None:
+    country_literals = ", ".join(f"'{country}'" for country in expected)
+    sql = ("select count(*) as total from query.v_process "
+           f"where country_code in ({country_literals})")
+    client = _ScriptedClient([sql])
+    response = await run_query(
+        QueryRequest(question=question, countries=["GT", "HN", "CR", "NI"], narrative=False,
+                     history=[ConversationTurn(
+                         question="Compara Guatemala y Costa Rica",
+                         countries=["GT", "HN", "CR", "NI"], sql=sql)]),
+        client=client,  # type: ignore[arg-type]
+        executor=_ScriptedExecutor(result=Rows(  # type: ignore[arg-type]
+            columns=["total"], rows=[{"total": 10}], row_count=1, truncated=False)),
+        log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
+        system_blocks=[], model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001", max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY, budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject", prompt_version="0.1.0", app_version="0.1.0",
+    )
+    await wait_for_audit_tasks()
+    assert response.outcome is Outcome.OK
+    assert response.countries_filter == expected
 
 
 def _count_columns() -> list[Column]:
