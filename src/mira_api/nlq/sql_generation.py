@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from mira_api.audit.outcomes import Outcome
 from mira_api.llm.client import ClaudeApiError, ClaudeClient, ClaudeRefusal
+from mira_api.nlq.period_scope import PeriodScope, changes_period, extract_period, preserves_period
 from mira_api.nlq.prompts import (
     SQL_SYSTEM_PROMPT,
     SQL_USER_PROMPT,
@@ -121,6 +122,7 @@ class GenerationResult:
     #: Suma de TODOS los intentos -- un reintento tambien cuesta tokens, el
     #: presupuesto (Hito 5) tiene que verlo completo, no solo el ultimo.
     usage: Usage
+    period_scope: PeriodScope | None = None
 
 
 def build_system_blocks(columns: list[ColumnDoc]) -> list[dict[str, object]]:
@@ -157,8 +159,25 @@ def _build_messages(
     for prior in history:
         messages.append({"role": "user", "content": _user_turn(prior.question, prior.countries)})
         messages.append({"role": "assistant", "content": prior.sql})
-    messages.append({"role": "user", "content": _user_turn(question, countries)})
+    current = _user_turn(question, countries)
+    period = _inherited_period(question, history)
+    if period is not None:
+        current += "\n" + period.instruction()
+    messages.append({"role": "user", "content": current})
     return messages
+
+
+def _inherited_period(question: str, history: list[PriorTurn]) -> PeriodScope | None:
+    if changes_period(question):
+        return None
+    for prior in reversed(history):
+        period = extract_period(prior.sql)
+        if period is not None:
+            return period
+        # An explicit period reset in a more recent turn ends inheritance.
+        if changes_period(prior.question):
+            break
+    return None
 
 
 def _strip_markdown_fence(text: str) -> str:
@@ -194,6 +213,7 @@ async def generate_validated_sql(
     el uso acumulado de tokens -- un intento fallido tambien cuesta.
     """
     messages = _build_messages(question, countries, history or [])
+    inherited_period = _inherited_period(question, history or [])
     attempts: list[GenerationAttempt] = []
     usage = Usage()
 
@@ -232,6 +252,13 @@ async def generate_validated_sql(
             validated = validate(
                 sql_text, max_rows=max_rows, countries=countries, question=question,
             )
+            if (inherited_period is not None
+                    and not preserves_period(validated.sql, inherited_period)):
+                raise SqlRejected(
+                    Outcome.REJECTED_SQL_COST,
+                    "follow_up_period_scope",
+                    inherited_period.instruction(),
+                )
         except SqlRejected as err:
             attempts.append(
                 GenerationAttempt(
@@ -255,7 +282,9 @@ async def generate_validated_sql(
             continue
 
         attempts.append(GenerationAttempt(attempt_no, sql_text, accepted=True))
-        return GenerationResult(validated=validated, attempts=attempts, usage=usage)
+        return GenerationResult(
+            validated=validated, attempts=attempts, usage=usage, period_scope=inherited_period,
+        )
 
     # Inalcanzable: el ultimo intento siempre re-lanza o retorna arriba.
     raise AssertionError("generate_validated_sql: bucle de intentos mal formado")

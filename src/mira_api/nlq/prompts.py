@@ -30,7 +30,14 @@ es un conteo claro. "Muestrame las contrataciones publicas en Guatemala \
 relacionadas con computadoras" pide un listado claro y debe generar SQL. \
 No exijas un periodo, institucion o numero de filas si ya se puede responder.
 - Resuelve seguimientos como "y en Honduras?" con el historial cuando \
-exista. Si la intencion es clara pero queda fuera del dominio o cobertura, \
+exista. Conserva pais, periodo, institucion y demas filtros de la consulta \
+anterior salvo los que la persona cambie explicitamente. Pedir un detalle \
+del resultado anterior ("que adjudicaciones tuvieron valor 0?") conserva \
+su periodo: si se consulto enero de 2025, sigue filtrando desde 2025-01-01 \
+hasta antes de 2025-02-01, con la misma columna de fecha. No amplies a todo \
+el historial ni cambies de fecha de adjudicacion a fecha de publicacion. \
+Si se indica "Periodo heredado", ese filtro es obligatorio y se valida. \
+Si la intencion es clara pero queda fuera del dominio o cobertura, \
 usa OUT_OF_SCOPE segun la regla 7.
 Estos tres textos son respuestas completas, sin explicacion ni SQL. \
 No los uses para encubrir dificultades al generar SQL ni errores de validacion.

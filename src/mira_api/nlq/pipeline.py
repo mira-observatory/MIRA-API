@@ -806,7 +806,8 @@ async def run_query(
             narrative_result = await generate_narrative(
                 client,
                 model=narrative_model,
-                question=question,
+                question=(question + "\n" + result.period_scope.instruction()
+                          if result.period_scope is not None else question),
                 rows=rows_result.rows,
                 row_count=rows_result.row_count,
                 truncated=rows_result.truncated,

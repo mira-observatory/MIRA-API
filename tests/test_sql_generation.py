@@ -362,6 +362,110 @@ async def test_el_historial_sobrevive_a_un_reintento_del_validador() -> None:
     assert "rechazado" in str(segunda_llamada[-1]["content"])
 
 
+JANUARY_SQL = (
+    "SELECT a.currency_code, MIN(a.awarded_amount), MAX(a.awarded_amount) "
+    "FROM query.v_awards a JOIN query.v_process p USING (process_id) "
+    "WHERE p.country_code = 'GT' AND a.award_date >= '2025-01-01' "
+    "AND a.award_date < '2025-02-01' GROUP BY a.currency_code"
+)
+ZERO_AWARDS_SQL = (
+    "SELECT a.award_date, a.awarded_amount, a.currency_code "
+    "FROM query.v_awards a JOIN query.v_process p USING (process_id) "
+    "WHERE p.country_code = 'GT' AND a.awarded_amount = 0 "
+    "AND a.award_date >= '2025-01-01' AND a.award_date < '2025-02-01'"
+)
+JANUARY_HISTORY = [PriorTurn(
+    question="En Guatemala durante enero de 2025, agrupa las adjudicaciones. "
+    "Para cada adjudicación coloca el monto individual mínimo y monto individual máximo.",
+    countries=["GT"], sql=JANUARY_SQL,
+)]
+
+
+@pytest.mark.parametrize("wrong", [
+    ZERO_AWARDS_SQL.replace(
+        " AND a.award_date >= '2025-01-01' AND a.award_date < '2025-02-01'", ""),
+    ZERO_AWARDS_SQL.replace("2025", "2026"),
+    ZERO_AWARDS_SQL.replace("2025-02-01", "2026-01-01"),
+    ZERO_AWARDS_SQL.replace("a.award_date >=", "p.publication_date >=")
+                   .replace("a.award_date <", "p.publication_date <"),
+])
+@pytest.mark.asyncio
+async def test_detalle_del_resultado_conserva_enero_y_reintenta_si_el_modelo_pierde_el_periodo(
+    wrong: str,
+) -> None:
+    client = _ScriptedClient([wrong, ZERO_AWARDS_SQL])
+    result = await generate_validated_sql(
+        client, model="test", system=[], countries=["GT"], max_rows=MAX_ROWS,
+        question="Que adjudicaciones estuvieron con el valor de 0?", history=JANUARY_HISTORY,
+    )
+    assert result.attempts[0].rejection_rule == "follow_up_period_scope"
+    assert result.attempts[1].accepted
+    assert result.period_scope is not None
+    assert result.period_scope.start.isoformat() == "2025-01-01"
+    current_message = str(client.calls[0][-1]["content"])
+    assert "Periodo heredado" in current_message
+    assert "2025-01-01" in current_message and "2025-02-01" in current_message
+    assert "follow_up_period_scope" in str(client.calls[1][-1]["content"])
+
+
+@pytest.mark.asyncio
+async def test_nunca_acepta_sql_que_sigue_perdiendo_el_periodo() -> None:
+    wrong = ZERO_AWARDS_SQL.replace("2025", "2026")
+    with pytest.raises(GenerationFailed) as error:
+        await generate_validated_sql(
+            _ScriptedClient([wrong] * MAX_ATTEMPTS), model="test", system=[],
+            countries=["GT"], max_rows=MAX_ROWS,
+            question="Que adjudicaciones estuvieron con el valor de 0?", history=JANUARY_HISTORY,
+        )
+    assert error.value.rule == "follow_up_period_scope"
+    assert all(not attempt.accepted for attempt in error.value.attempts)
+
+
+@pytest.mark.parametrize(("question", "sql"), [
+    ("Ahora en febrero de 2025", ZERO_AWARDS_SQL.replace("2025-02-01", "2025-03-01")
+                                              .replace("2025-01-01", "2025-02-01")),
+    ("¿Y en 2026?", ZERO_AWARDS_SQL.replace("2025", "2026")),
+    ("En todo el historial", ZERO_AWARDS_SQL.replace(
+        " AND a.award_date >= '2025-01-01' AND a.award_date < '2025-02-01'", "")),
+])
+@pytest.mark.asyncio
+async def test_usuario_puede_cambiar_o_quitar_el_periodo(question: str, sql: str) -> None:
+    result = await generate_validated_sql(
+        _ScriptedClient([sql]), model="test", system=[], countries=["GT"], max_rows=MAX_ROWS,
+        question=question, history=JANUARY_HISTORY,
+    )
+    assert result.period_scope is None
+    assert len(result.attempts) == 1
+
+
+@pytest.mark.asyncio
+async def test_varios_seguimientos_conservan_el_periodo_del_ultimo_sql() -> None:
+    history = [*JANUARY_HISTORY, PriorTurn(
+        question="Que adjudicaciones estuvieron con el valor de 0?",
+        countries=["GT"], sql=ZERO_AWARDS_SQL,
+    )]
+    result = await generate_validated_sql(
+        _ScriptedClient([ZERO_AWARDS_SQL]), model="test", system=[], countries=["GT"],
+        max_rows=MAX_ROWS, question="Muestra también los proveedores", history=history,
+    )
+    assert result.period_scope is not None
+    assert result.period_scope.start.isoformat() == "2025-01-01"
+
+
+@pytest.mark.asyncio
+async def test_no_recupera_un_periodo_que_el_usuario_ya_quito() -> None:
+    unrestricted = ZERO_AWARDS_SQL.replace(
+        " AND a.award_date >= '2025-01-01' AND a.award_date < '2025-02-01'", "")
+    history = [*JANUARY_HISTORY, PriorTurn(
+        question="En todo el historial", countries=["GT"], sql=unrestricted,
+    )]
+    result = await generate_validated_sql(
+        _ScriptedClient([unrestricted]), model="test", system=[], countries=["GT"],
+        max_rows=MAX_ROWS, question="Muestra los proveedores", history=history,
+    )
+    assert result.period_scope is None
+
+
 @pytest.mark.asyncio
 async def test_out_of_scope_tolera_espacios_y_mayusculas() -> None:
     client = _ScriptedClient(["  out_of_scope  "])

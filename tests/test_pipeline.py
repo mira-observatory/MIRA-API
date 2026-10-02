@@ -885,6 +885,52 @@ async def test_seguimiento_resuelve_el_alcance_del_pais_sin_volver_al_default(
     assert response.countries_filter == expected
 
 
+@pytest.mark.asyncio
+async def test_monto_cero_solo_ejecuta_enero_y_le_pasa_el_periodo_al_redactor() -> None:
+    from tests.test_sql_generation import JANUARY_HISTORY, ZERO_AWARDS_SQL
+
+    class RecordingExecutor(_ScriptedExecutor):
+        executed: list[str] = []
+
+        async def run(self, sql: str, *, max_rows: int, params: dict | None = None) -> Rows:
+            self.executed.append(sql)
+            return await super().run(sql, max_rows=max_rows, params=params)
+
+    executor = RecordingExecutor(result=Rows(
+        columns=["award_date", "awarded_amount", "currency_code"],
+        rows=[{"award_date": "2025-01-15", "awarded_amount": 0, "currency_code": "GTQ"}],
+        row_count=1, truncated=False,
+    ))
+    client = _ScriptedClient([
+        ZERO_AWARDS_SQL.replace("2025", "2026"), ZERO_AWARDS_SQL,
+        "Se muestra una adjudicación con monto 0 GTQ en enero de 2025.",
+    ])
+    question = "Que adjudicaciones estuvieron con el valor de 0?"
+    response = await run_query(
+        QueryRequest(question=question, countries=["GT", "HN", "CR", "NI"], narrative=True,
+                     history=[ConversationTurn(
+                         question=JANUARY_HISTORY[0].question,
+                         countries=["GT"], sql=JANUARY_HISTORY[0].sql)]),
+        client=client,  # type: ignore[arg-type]
+        executor=executor,  # type: ignore[arg-type]
+        log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
+        system_blocks=[], model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001", max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY, budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject", prompt_version="0.1.0", app_version="0.1.0",
+    )
+    await wait_for_audit_tasks()
+    assert response.outcome is Outcome.OK
+    assert response.question == question
+    assert response.countries_filter == ["GT"]
+    assert len(executor.executed) == 1
+    assert "2025-01-01" in executor.executed[0] and "2025-02-01" in executor.executed[0]
+    payload = json.loads(str(client.calls[-1][0]["content"]))
+    assert "Periodo heredado" in payload["pregunta"]
+    assert "2025-01-01" in payload["pregunta"]
+    assert response.narrative_verified
+
+
 def _count_columns() -> list[Column]:
     return [
         Column(name="country_code", kind="text"),
