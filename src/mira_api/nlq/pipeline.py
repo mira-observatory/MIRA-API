@@ -17,6 +17,7 @@ from mira_api.llm.client import ClaudeClient
 from mira_api.nlq.coverage_facts import diagnose_empty_result
 from mira_api.nlq.language import detect_language
 from mira_api.nlq.narrative import generate_narrative
+from mira_api.nlq.ranking import requested_row_limit
 from mira_api.nlq.sql_generation import (
     GenerationAttempt,
     GenerationFailed,
@@ -703,6 +704,13 @@ async def run_query(
                 )
 
         limit_reached = rows_result.row_count >= result.validated.effective_limit
+        # Alcanzar la cantidad pedida completa el top; alcanzar un limite
+        # automatico puede ocultar filas. La truncacion real va por separado.
+        implicit_limit_reached = (
+            limit_reached
+            and result.validated.effective_limit > 1
+            and requested_row_limit(question) != result.validated.effective_limit
+        )
         if rows_result.row_count > 0:
             mezcla = mixed_currency_warning(columns, rows_result.rows, countries)
             if mezcla is not None:
@@ -722,14 +730,13 @@ async def run_query(
         if (
             rows_result.row_count > 0
             and not rows_result.truncated
-            and result.validated.effective_limit > 1
-            and limit_reached
+            and implicit_limit_reached
         ):
             # El tope global (rows_result.truncated) no dice nada aqui: un ranking
             # ambiguo (regla 5c) corta en LIMIT 100, muy por debajo del tope de
             # seguridad de 500, y sin este aviso esas otras filas desaparecen sin
-            # dejar rastro. LIMIT 1 queda afuera a proposito -- ahi se pidio un
-            # solo ganador, no una lista, y "hay mas" no tiene sentido como aviso.
+            # dejar rastro. Un top explicito y LIMIT 1 quedan afuera: completar
+            # la cantidad solicitada no significa que falten resultados.
             warnings.append(
                 Warning(
                     code="LIMIT_MAY_HIDE_ROWS",
@@ -796,9 +803,7 @@ async def run_query(
                 rows=rows_result.rows,
                 row_count=rows_result.row_count,
                 truncated=rows_result.truncated,
-                # LIMIT 1 responde al ganador solicitado; no es una lista
-                # incompleta. La truncacion real se informa por separado.
-                limit_reached=limit_reached and result.validated.effective_limit > 1,
+                limit_reached=implicit_limit_reached,
                 currency_leaders="query.v_supplier_award_totals" in result.validated.relations,
                 max_attempts=narrative_max_attempts,
                 max_rows_in_prompt=narrative_max_rows_in_prompt,

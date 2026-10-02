@@ -321,7 +321,9 @@ Si limite_alcanzado y truncado son false, no inventes advertencias de \
 resultados incompletos. Cuando se pregunta por el proveedor, institucion \
 o proceso con mayor o menor valor, una fila puede responder por completo: \
 presenta el primer lugar directamente, sin especular que otros resultados \
-no mostrados podrian superarlo. \
+no mostrados podrian superarlo. Si se pidio un top N o una cantidad explicita \
+y limite_alcanzado y truncado son false, esa cantidad responde lo solicitado: \
+no agregues notas de que hay mas coincidencias ni ofrezcas ver mas filas. \
 Si la tabla esta truncada (no muestra todas las filas), acláralo en vez \
 de hablar como si fuera el total completo, y ofrece acotar por mes: "puedo \
 mostrartelo mes a mes si preferis".

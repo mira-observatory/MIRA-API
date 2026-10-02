@@ -878,6 +878,66 @@ async def test_aviso_y_redactor_reciben_el_limite_real_del_resultado(
     assert payload["limite_alcanzado"] is (row_count == 100)
     assert payload["truncado"] is truncated
     assert len(payload["muestra_para_redactar"]) == 25
+    codes = {w.code for w in response.warnings}
+    assert ("LIMIT_MAY_HIDE_ROWS" in codes) is (limited and not truncated)
+    assert ("TRUNCATED_RESULT" in codes) is truncated
+
+
+@pytest.mark.parametrize(
+    ("question", "sql_limit", "row_count", "truncated", "implicit_limit"),
+    [
+        ("En Honduras durante 2023, muestra las 5 instituciones con más procesos "
+         "publicados que utilizaron al menos 5 modalidades de contratación distintas. "
+         "Incluye procesos distintos, modalidades distintas y fechas de su primera "
+         "y última publicación. Ordena por cantidad de procesos.", 5, 5, False, False),
+        ("Top 5 instituciones de Honduras", 5, 5, False, False),
+        ("Muestra las cinco instituciones con más procesos en Honduras", 5, 5, False, False),
+        ("Show the 5 institutions with the most processes in Honduras", 5, 5, False, False),
+        ("Top 5 instituciones de Honduras", 5, 4, False, False),
+        ("Instituciones con al menos 5 modalidades en Honduras en 2023", 5, 5, False, True),
+        ("Top 10 instituciones de Honduras", 5, 5, False, True),
+        ("Top 5 instituciones de Honduras", 5, 5, True, False),
+        ("Top 1000 instituciones de Honduras", 500, 500, True, True),
+    ],
+)
+@pytest.mark.asyncio
+async def test_top_solicitado_no_activa_aviso_ni_narrativa_de_resultado_incompleto(
+    question: str, sql_limit: int, row_count: int, truncated: bool, implicit_limit: bool,
+) -> None:
+    client = _ScriptedClient([
+        "select country_code, title from query.v_process where country_code = 'HN' "
+        f"order by published_date desc nulls last limit {sql_limit}",
+        f"Se muestran {row_count} resultados.",
+    ])
+    rows = [{"country_code": "HN", "title": "Pavimentacion"} for _ in range(row_count)]
+    events: list[tuple[str, dict]] = []
+    response = await run_query(
+        QueryRequest(question=question, countries=["HN"], narrative=True),
+        client=client,  # type: ignore[arg-type]
+        executor=_ScriptedExecutor(result=Rows(  # type: ignore[arg-type]
+            columns=["country_code", "title"], rows=rows,
+            row_count=row_count, truncated=truncated)),
+        log_executor=_FakeLogExecutor(),  # type: ignore[arg-type]
+        system_blocks=[], model="claude-sonnet-5",
+        narrative_model="claude-haiku-4-5-20251001", max_rows=MAX_ROWS,
+        budget_daily_usd=BUDGET_DAILY, budget_monthly_usd=BUDGET_MONTHLY,
+        subject_key="test-subject", prompt_version="0.1.0", app_version="0.1.0",
+        on_event=lambda event, data: events.append((event, data)),
+    )
+    await wait_for_audit_tasks()
+    assert response.outcome is Outcome.OK
+    codes = {w.code for w in response.warnings}
+    assert ("LIMIT_MAY_HIDE_ROWS" in codes) is (implicit_limit and not truncated)
+    assert ("TRUNCATED_RESULT" in codes) is truncated
+    streamed_codes = {
+        warning["code"]
+        for event, data in events if event == "warnings"
+        for warning in data["warnings"]
+    }
+    assert streamed_codes == codes
+    payload = json.loads(str(client.calls[-1][0]["content"]))
+    assert payload["limite_alcanzado"] is implicit_limit
+    assert payload["truncado"] is truncated
 
 
 @pytest.mark.parametrize("truncated", [False, True])
