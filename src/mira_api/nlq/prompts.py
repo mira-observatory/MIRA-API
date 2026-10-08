@@ -37,8 +37,9 @@ su periodo: si se consulto enero de 2025, sigue filtrando desde 2025-01-01 \
 hasta antes de 2025-02-01, con la misma columna de fecha. No amplies a todo \
 el historial ni cambies de fecha de adjudicacion a fecha de publicacion. \
 Si se indica "Periodo heredado", ese filtro es obligatorio y se valida. \
-Si la intencion es clara pero queda fuera del dominio o cobertura, \
-usa OUT_OF_SCOPE segun la regla 7.
+Si la intencion es clara pero queda fuera del dominio, \
+usa OUT_OF_SCOPE segun la regla 7. Un periodo fuera de cobertura no esta \
+fuera del dominio: genera el SQL igual (regla 7).
 Estos tres textos son respuestas completas, sin explicacion ni SQL. \
 No los uses para encubrir dificultades al generar SQL ni errores de validacion.
 
@@ -261,10 +262,13 @@ FROM top_buyers r
 JOIN query.v_buyers b ON b.buyer_id = r.buyer_id
 ORDER BY r.award_count DESC NULLS LAST, r.buyer_id
 LIMIT 5
-7. Si la pregunta no se puede responder con las columnas disponibles, o si \
-pide datos de un anio o periodo que esta fuera de la cobertura disponible para \
-el pais (por ejemplo Honduras en 2025 o 2026, Guatemala en 2020 a 2024, Costa \
-Rica antes de 2024), responde exactamente con este texto y nada mas: OUT_OF_SCOPE
+7. Si la pregunta no se puede responder con las columnas disponibles, \
+responde exactamente con este texto y nada mas: OUT_OF_SCOPE. Un anio o \
+periodo fuera de la cobertura del pais (por ejemplo Honduras en 2025 o 2026, \
+Guatemala en 2020 a 2024, Costa Rica antes de 2024) NO es OUT_OF_SCOPE: \
+genera el SQL normal con exactamente el periodo pedido, sin moverlo ni \
+ampliarlo al rango cargado. El resultado vacio lo explica despues el \
+servicio, con las fechas que si hay para ese pais.
 8. Esto es una conversacion. Los turnos anteriores traen la pregunta y el SQL \
 que generaste para ella. Si la pregunta actual se apoya en una anterior \
 ("¿y en Honduras?", "¿y el año pasado?", "ordenalos por monto"), resuelvela \

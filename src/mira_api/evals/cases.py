@@ -179,6 +179,20 @@ CASES: list[Case] = [
         expect_verified_narrative=False,
     ),
     Case(
+        id="periodo_fuera_de_cobertura_gt",
+        question="Muestrame los procesos de compra de medicamentos publicados en Guatemala en 2015",
+        countries=["GT"],
+        allowed_outcomes=frozenset({Outcome.OK_ZERO_ROWS}),
+        expect_relations=frozenset({"query.v_process"}),
+        expect_countries=frozenset({"GT"}),
+        expect_verified_narrative=False,
+        regression=(
+            "El prompt mandaba OUT_OF_SCOPE para anios fuera de cobertura y el "
+            "aviso NO_DATA_FOR_PERIOD nunca se calculaba: el usuario veia "
+            "'fuera de lo que MIRA puede responder' en vez de las fechas disponibles."
+        ),
+    ),
+    Case(
         id="cobertura_no_pasa_por_el_modelo",
         question="hasta que fecha llegan los datos cargados de Costa Rica",
         countries=_CR,
